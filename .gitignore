@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv*/
+venv/
+.pytest_cache/
+
+# Heavy data and run outputs (models, caches, adapters, logs, generated reports)
+data/
+work/
+artifacts/
+reports/
+logs/
+*.safetensors
+*.gguf
+*.npy
+*.pt
+
+# Run-specific configs written by the scripts
+configs/selection*.yaml
+configs/tiny_e2e.yaml
+
+# Secrets / local
+.env
+*.local.yaml

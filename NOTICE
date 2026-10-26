@@ -1,0 +1,15 @@
+SMEL FT (Sparse MoE LoRA Fine-Tuning)
+Copyright 2026 The SMEL FT Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It relies on, but does not include, the following third-party software and models:
+
+- Hugging Face Transformers (Apache-2.0). smel/layer_runner.py re-executes, at runtime, the source of
+  `torch_chunk_gated_delta_rule` from the installed transformers package as a pure-PyTorch reference;
+  no transformers code is copied into this repository.
+- flash-linear-attention / fla-core (MIT): Gated DeltaNet kernels.
+- llama.cpp / ggml (MIT): GGUF quantization through the user's own build (ggml_quantize_chunk),
+  gguf-py for reading GGUF files.
+- Qwen3.6-35B-A3B by the Qwen team (Apache-2.0): the base model; weights and tokenizer are downloaded
+  by the user from the Hugging Face Hub and are not redistributed here.

@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smel-ft"
+version = "0.1.0"
+description = "SMEL FT: Sparse MoE LoRA fine-tuning - LoRA on router-selected experts of a large MoE with a cached frozen bottom, on one consumer GPU"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.11"
+keywords = ["moe", "lora", "fine-tuning", "qwen", "mixture-of-experts", "low-vram", "gguf"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Environment :: GPU :: NVIDIA CUDA",
+]
+# Tested with: torch 2.11 (cu128), transformers 5.17, triton-windows 3.7.1, flash-linear-attention 0.5.2,
+# safetensors 0.8, numpy 2.5, gguf 0.19, Python 3.14 on Windows 11.
+dependencies = [
+    "torch>=2.11",                  # torch._grouped_mm for the per-expert matmuls
+    "transformers>=5.17",           # qwen3_5_moe (reference implementation + tokenizer / chat template)
+    "flash-linear-attention>=0.5.2",
+    "fla-core>=0.5.2",
+    "triton>=3.4; sys_platform != 'win32'",
+    "triton-windows>=3.4; sys_platform == 'win32'",
+    "safetensors>=0.5",
+    "numpy>=1.26",
+    "pyyaml>=6",
+    "huggingface_hub>=0.30",
+    "einops",
+    "psutil",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+gguf = ["gguf>=0.17"]                    # GGUF export (also needs a llama.cpp build, see README)
+data = ["pyarrow>=15"]                   # scripts/make_general.py
+dev = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/<you>/smel-ft"
+
+[tool.setuptools]
+packages = ["smel"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
