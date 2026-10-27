@@ -31,9 +31,11 @@ def server_exe(cfg=None):
     return exe
 
 
-FLAGS = ["-ngl", "99", "--n-cpu-moe", "32", "-t", "8", "-c", "8192", "-np", "1", "-fa", "on", "-ctk", "q8_0",
-         "-ctv", "q8_0", "--load-mode", "mmap+mlock", "--spec-type", "draft-mtp", "--spec-draft-n-max", "2",
-         "--no-mmproj", "--jinja", "--host", "127.0.0.1"] + shlex.split(os.environ.get("SMEL_LLAMA_SERVER_ARGS", ""))
+_DEFAULT_FLAGS = ("-ngl 99 --n-cpu-moe 32 -t 8 -c 8192 -np 1 -fa on -ctk q8_0 -ctv q8_0 --load-mode mmap+mlock "
+                  "--spec-type draft-mtp --spec-draft-n-max 2 --no-mmproj --jinja")
+# SMEL_LLAMA_SERVER_FLAGS replaces the defaults (e.g. a model without an MTP head in its GGUF); _ARGS appends
+FLAGS = (shlex.split(os.environ.get("SMEL_LLAMA_SERVER_FLAGS", _DEFAULT_FLAGS)) + ["--host", "127.0.0.1"]
+         + shlex.split(os.environ.get("SMEL_LLAMA_SERVER_ARGS", "")))
 # general questions (Russian, like the domain data): answers should not degrade after fine-tuning
 GENERAL_PROMPTS = [
     "Почему небо голубое? Ответь коротко.",

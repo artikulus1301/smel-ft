@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from smel.pipeline import ROOT  # noqa: E402
+from smel.pipeline import load_config  # noqa: E402
 from gen_compare import FLAGS, post, server_exe, wait_ready  # noqa: E402
 
 # The example persona of the reference experiment; edit PERSONA and the regexes for your domain.
@@ -29,8 +29,8 @@ MASC = re.compile(r"\bя\s+(бы\s+)?(сделал|почувствовал|бы
                   r"хотел|сам|готов|рад|уверен|должен)\b", re.I)
 
 
-def load(tag):
-    return [json.loads(l) for l in open(os.path.join(ROOT, "reports", f"gen_{tag}.jsonl"), encoding="utf-8")]
+def load(reports, tag):
+    return [json.loads(l) for l in open(os.path.join(reports, f"gen_{tag}.jsonl"), encoding="utf-8")]
 
 
 def metrics(rows):
@@ -61,10 +61,13 @@ def main():
     ap.add_argument("--pairs", nargs="+", required=True, help="x:y pairs to judge")
     ap.add_argument("--gguf", required=True, help="judge model (the base GGUF)")
     ap.add_argument("--port", type=int, default=8091)
+    ap.add_argument("--config")
     args = ap.parse_args()
-    runs = {t: load(t) for t in args.tags}
+    cfg = load_config(args.config)
+    reports, logs = cfg["paths"]["reports"], cfg["paths"]["logs"]
+    runs = {t: load(reports, t) for t in args.tags}
     res = {"metrics": {t: metrics(r) for t, r in runs.items()}, "pairs": {}}
-    log = open(os.path.join(ROOT, "logs", "llama_server_judge.log"), "w")
+    log = open(os.path.join(logs, "llama_server_judge.log"), "w")
     proc = subprocess.Popen([server_exe(), "-m", args.gguf, "--port", str(args.port)] + FLAGS, stdout=log,
                             stderr=subprocess.STDOUT)
     try:
@@ -87,7 +90,7 @@ def main():
     finally:
         proc.terminate()
         proc.wait(60)
-    json.dump(res, open(os.path.join(ROOT, "reports", "judge.json"), "w", encoding="utf-8"), indent=1,
+    json.dump(res, open(os.path.join(reports, "judge.json"), "w", encoding="utf-8"), indent=1,
               ensure_ascii=False)
     for t, m in res["metrics"].items():
         print(f"{t:22s} ai_break {m['ai_break']:.0%}  stage_dirs {m['stage_dirs']:.0%}  masc {m['masc']:.0%}  "

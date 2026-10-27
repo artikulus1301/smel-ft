@@ -162,7 +162,8 @@ class _Shard:
             f.seek(self.base + off)
             view, got = memoryview(buf), 0
             while got < nbytes:
-                k = f.readinto(view[got:])
+                # chunked: a single ~1 GB ReadFile can fail on Windows (EINVAL, out of system resources)
+                k = f.readinto(view[got:got + (64 << 20)])
                 if not k:
                     raise IOError(f"short read in {self.path}")
                 got += k
