@@ -22,10 +22,11 @@ ap.add_argument("--imatrix", required=True, help="importance matrix the GGUF was
 args = ap.parse_args()
 cfg = load_config()
 get = Checkpoint(args.model or cfg["paths"]["model_dir"]).get
-p = f"model.language_model.layers.{args.layer}.mlp."
-t = hf_to_gguf_tensors(args.layer, get(p + "experts.gate_up_proj"), get(p + "experts.down_proj"),
-                       [get(p + f"shared_expert.{n}.weight") for n in ("gate_proj", "up_proj", "down_proj")])
+ck = Checkpoint(args.model or cfg["paths"]["model_dir"])
+l = args.layer
 g, tgt, im = GGMLProc(cfg["llamacpp"]["dir"]), GGUFTarget(args.gguf), Imatrix(args.imatrix)
+t = hf_to_gguf_tensors(l, get(ck.full_name(l, "mlp.experts.gate_up_proj")), get(ck.full_name(l, "mlp.experts.down_proj")),
+                       [get(n) for n in ck.shared_mlp_names(l)], ck.arch, f"blk.{l}.ffn_gate_up_exps.weight" in tgt.info)
 for name, w in t.items():
     qtype, _, nb, tname = tgt.info[name]
     t0 = time.perf_counter()

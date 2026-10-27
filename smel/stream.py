@@ -13,7 +13,7 @@ from .moe import BF16Experts, Int4Experts, LayerExperts
 from .layer_runner import LayerWeights
 
 
-def build_layer(idx, ltype, t: dict, sel_ids=None, group=32, frozen_dtype=torch.bfloat16):
+def build_layer(idx, ltype, t: dict, sel_ids=None, group=32, frozen_dtype=torch.bfloat16, act="silu"):
     """t: device tensors of one layer, names relative to the layer. Recognizes either bf16 fused experts
     ('mlp.experts.gate_up_proj'/'down_proj') or packed int4 ('experts.gate_up.q', ...) + 'experts.sel.*'."""
     dense = {k: v for k, v in t.items() if not k.startswith(("mlp.experts.", "experts."))}
@@ -33,7 +33,7 @@ def build_layer(idx, ltype, t: dict, sel_ids=None, group=32, frozen_dtype=torch.
             sel_ids = t["experts.sel.ids"].tolist()
     if sgu is None:
         sel_ids = None
-    return LayerWeights(idx, ltype, dense, LayerExperts(frozen, sel_ids, sgu, sdn, group=group))
+    return LayerWeights(idx, ltype, dense, LayerExperts(frozen, sel_ids, sgu, sdn, group=group, act=act))
 
 
 class _StreamingSource:
@@ -136,7 +136,7 @@ class CheckpointSource(_StreamingSource):
         return out
 
     def _make(self, l, gpu):
-        return build_layer(l, self.d.layer_types[l], gpu, self.selection.get(l), self.group, self.dtype)
+        return build_layer(l, self.d.layer_types[l], gpu, self.selection.get(l), self.group, self.dtype, self.d.act)
 
 
 class PackedSource(_StreamingSource):
@@ -159,10 +159,11 @@ class PackedSource(_StreamingSource):
             for l in layers:
                 ids = list(selection.get(l, []))
                 if ids:
-                    base = f"{ckpt.prefix}layers.{l}.mlp.experts."
+                    gu_name = ckpt.full_name(l, "mlp.experts.gate_up_proj")
+                    dn_name = ckpt.full_name(l, "mlp.experts.down_proj")
                     self.sel_rows[l] = {"experts.sel.ids": torch.tensor(ids, dtype=torch.long),
-                                        "experts.sel.gate_up": ckpt.get_rows(base + "gate_up_proj", ids).contiguous(),
-                                        "experts.sel.down": ckpt.get_rows(base + "down_proj", ids).contiguous()}
+                                        "experts.sel.gate_up": ckpt.get_rows(gu_name, ids).contiguous(),
+                                        "experts.sel.down": ckpt.get_rows(dn_name, ids).contiguous()}
         if pin:
             used = 0
             for l in layers:
@@ -193,7 +194,7 @@ class PackedSource(_StreamingSource):
         return self.pinned[l] if l in self.pinned else self._read(l)
 
     def _make(self, l, gpu):
-        return build_layer(l, self.d.layer_types[l], gpu, None, self.group)
+        return build_layer(l, self.d.layer_types[l], gpu, None, self.group, act=self.d.act)
 
 
 class DictSource:

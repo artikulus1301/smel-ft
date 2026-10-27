@@ -34,6 +34,7 @@ def load_config(path=None, overrides=None):
     if not paths.get("tokenizer"):
         paths["tokenizer"] = paths["model_dir"]
     paths.setdefault("progress", "logs/progress.md")
+    paths.setdefault("selection", "configs/selection.yaml")   # written by select_experts.py, read by the rest
     for k, p in paths.items():
         if isinstance(p, str) and not os.path.isabs(p):
             paths[k] = os.path.normpath(os.path.join(ROOT, p))

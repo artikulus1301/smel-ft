@@ -5,8 +5,32 @@ import random
 
 import numpy as np
 
-ASSIST_HDR = "<|im_start|>assistant\n"
-END = "<|im_end|>"
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class ChatSpec:
+    """Markers of the assistant turn in a rendered chat template."""
+    header: str        # text that opens an assistant turn
+    end: str           # text that closes it (supervised, so the model learns to stop)
+    think_open: str    # reasoning block at the start of an answer (excluded from the loss unless think_in_loss)
+    think_close: str
+    empty_think: str   # what the template puts before an answer when thinking is off; "" = nothing to add
+
+
+QWEN_SPEC = ChatSpec("<|im_start|>assistant\n", "<|im_end|>", "<think>", "</think>", "")
+# Gemma 4: history turns are rendered without a thought channel, but generation with thinking off starts the
+# answer after an empty one ("<|channel>thought\n<channel|>") - training adds it so both look the same
+GEMMA4_SPEC = ChatSpec("<|turn>model\n", "<turn|>", "<|channel>", "<channel|>", "<|channel>thought\n<channel|>")
+
+
+def chat_spec(tok) -> ChatSpec:
+    t = getattr(tok, "chat_template", None) or ""
+    if "<|turn>" in t:
+        return GEMMA4_SPEC
+    if "<|im_start|>" in t:
+        return QWEN_SPEC
+    raise ValueError("unknown chat template: add a ChatSpec for it in smel/data.py")
 
 
 def load_jsonl(path):
@@ -14,21 +38,35 @@ def load_jsonl(path):
         return [json.loads(l) for l in f if l.strip()]
 
 
-def assistant_spans(text: str, think_in_loss: bool = False):
-    """Character spans of supervised text: each assistant answer including its <|im_end|>. The template's
-    '<think>...</think>\\n\\n' prefix is excluded unless think_in_loss."""
+def add_empty_think(text: str, spec: ChatSpec) -> str:
+    if not spec.empty_think:
+        return text
+    out, pos = [], 0
+    while (i := text.find(spec.header, pos)) >= 0:
+        s = i + len(spec.header)
+        out.append(text[pos:s])
+        if not text.startswith(spec.think_open, s):
+            out.append(spec.empty_think)
+        pos = s
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def assistant_spans(text: str, think_in_loss: bool = False, spec: ChatSpec = QWEN_SPEC):
+    """Character spans of supervised text: each assistant answer including its end marker. A reasoning block at the
+    start of the answer (e.g. Qwen's '<think>...</think>\\n\\n') is excluded unless think_in_loss."""
     spans, pos = [], 0
     while True:
-        i = text.find(ASSIST_HDR, pos)
+        i = text.find(spec.header, pos)
         if i < 0:
             break
-        s = i + len(ASSIST_HDR)
-        e = text.find(END, s)
-        e = len(text) if e < 0 else e + len(END)
-        if not think_in_loss and text.startswith("<think>", s):
-            te = text.find("</think>", s)
+        s = i + len(spec.header)
+        e = text.find(spec.end, s)
+        e = len(text) if e < 0 else e + len(spec.end)
+        if not think_in_loss and text.startswith(spec.think_open, s):
+            te = text.find(spec.think_close, s)
             if 0 <= te < e:
-                s = te + len("</think>")
+                s = te + len(spec.think_close)
                 while s < e and text[s] == "\n":
                     s += 1
         spans.append((s, e))
@@ -38,11 +76,12 @@ def assistant_spans(text: str, think_in_loss: bool = False):
 
 def encode_chat(tok, messages, think_in_loss=False, max_len=None):
     """Returns (ids int32 [T], targets int32 [T]) where targets[t] = ids[t+1] if token t+1 is supervised else -100."""
-    text = tok.apply_chat_template(messages, tokenize=False)
+    spec = chat_spec(tok)
+    text = add_empty_think(tok.apply_chat_template(messages, tokenize=False), spec)
     enc = tok(text, add_special_tokens=False, return_offsets_mapping=True)
     ids = np.asarray(enc["input_ids"], dtype=np.int32)
     offs = enc["offset_mapping"]
-    spans = assistant_spans(text, think_in_loss)
+    spans = assistant_spans(text, think_in_loss, spec)
     sup = np.zeros(len(ids), dtype=bool)
     j = 0
     for t, (a, b) in enumerate(offs):

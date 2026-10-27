@@ -101,10 +101,12 @@ def load_head(cfg, sel, ck):
         t = load_file(packed)
         norm = t["norm.weight"].cuda()
         if "lm_head.q" in t:
-            return norm, LMHead(int8={"q": t["lm_head.q"].cuda(), "scale": t["lm_head.scale"].cuda()})
-        return norm, LMHead(weight=t["lm_head.weight"].cuda())
+            return norm, LMHead(int8={"q": t["lm_head.q"].cuda(), "scale": t["lm_head.scale"].cuda()},
+                                softcap=ck.dims.logit_softcap)
+        return norm, LMHead(weight=t["lm_head.weight"].cuda(), softcap=ck.dims.logit_softcap)
     return ck.get(ck.norm_name()).cuda(), LMHead.from_weight(ck.get(ck.lm_head_name()).cuda(),
-                                                             int8=cfg["model"]["lm_head_int8"])
+                                                             int8=cfg["model"]["lm_head_int8"],
+                                                             softcap=ck.dims.logit_softcap)
 
 
 def monitor_share(runner, batch, experts):
@@ -144,12 +146,12 @@ def main():
     ap.add_argument("--max-steps", type=int, default=None, help="stop after N steps (smoke test)")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--tag", default=None)
-    ap.add_argument("--selection", default=os.path.join(ROOT, "configs", "selection.yaml"))
+    ap.add_argument("--selection", default=None, help="default: paths.selection")
     args = ap.parse_args()
     cfg = load_config(args.config, parse_overrides(args.set))
     tc = cfg["train"]
     assert tc["dropout"] == 0.0, "LoRA dropout is not implemented"
-    sel = yaml.safe_load(open(args.selection))
+    sel = yaml.safe_load(open(args.selection or cfg["paths"]["selection"]))
     L = sel["L"]
     experts = {int(k): v for k, v in sel["experts"].items()}
     tag = args.tag or f"L{L}"

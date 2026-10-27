@@ -83,12 +83,10 @@ def run_bottom(cfg, sets: dict, stop_layer: int, out_dir: str, save_at=(), stats
                 s.load(saved[n])
         log(f"resume from layer {start}")
     else:
-        emb = ck.get(ck.embed_name())
         for name, (ts, idx) in sets.items():
             H[name] = torch.zeros(int(ts.offsets[-1]), d.hidden, dtype=torch.bfloat16)
             rows = torch.from_numpy(mb_rows(ts, idx))
-            H[name][rows] = emb[torch.from_numpy(ts.ids[rows.numpy()].astype(np.int64))].to(torch.bfloat16)
-        del emb
+            H[name][rows] = ck.embed(torch.from_numpy(ts.ids[rows.numpy()].astype(np.int64)))
 
     def save_h(name, path):
         hs = HiddenStore(path + ".tmp.npy", H[name].shape[0], d.hidden, mode="w+")

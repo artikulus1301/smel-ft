@@ -45,7 +45,8 @@ def main():
         mbs = microbatches(ts, ts.indices(split), cfg["train"]["mb_tokens"])
         sets[name] = (ts, store, mbs)
     norm = ck.get(ck.norm_name()).cuda()
-    head = LMHead.from_weight(ck.get(ck.lm_head_name()).cuda(), int8=args.packed and cfg["model"]["lm_head_int8"])
+    head = LMHead.from_weight(ck.get(ck.lm_head_name()).cuda(), int8=args.packed and cfg["model"]["lm_head_int8"],
+                              softcap=d.logit_softcap)
     res = {}
     for which, use_lora in (("base", False), ("adapter", True)):
         if args.packed:

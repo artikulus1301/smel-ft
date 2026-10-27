@@ -1,5 +1,9 @@
-"""Functional forward of one Qwen3.5/3.6-MoE decoder layer (Gated DeltaNet or gated full attention + MoE) on a
-packed stream of sequences, and the layer-major runner that executes a whole optimizer step layer by layer."""
+"""Functional forward of one MoE decoder layer on a packed stream of sequences, and the layer-major runner that
+executes a whole optimizer step layer by layer.
+
+  * qwen3_5_moe: Gated DeltaNet or gated full attention, then experts + gated shared expert.
+  * gemma4:      sliding-window or global attention (K = V, partial RoPE), then a dense MLP and the experts in
+                 parallel, each with its own norms, and a per-layer output scalar."""
 import inspect
 import math
 from dataclasses import dataclass
@@ -8,7 +12,7 @@ import torch
 import torch.nn.functional as F
 
 from .model_io import Dims
-from .moe import LayerExperts, moe_forward
+from .moe import LayerExperts, mlp_lora, moe_forward, route_gemma4, routed_experts
 
 try:
     from fla.ops.gated_delta_rule import chunk_gated_delta_rule as _fla_chunk_gdr
@@ -56,10 +60,20 @@ class SeqCtx:
     cos: torch.Tensor  # [T, rotary_dim]
     sin: torch.Tensor
     attn_mask: torch.Tensor | None  # bool [T, T] (True = attend) or None for one sequence
+    # gemma4: RoPE of the global layers and the sliding-window mask (None = plain causal is enough)
+    cos_g: torch.Tensor | None = None
+    sin_g: torch.Tensor | None = None
+    sliding_mask: torch.Tensor | None = None
 
     @property
     def T(self):
         return int(self.cu_seqlens[-1])
+
+
+def _cos_sin(pos, inv_freq, dtype):
+    freqs = pos.float()[:, None] * inv_freq[None]
+    emb = torch.cat([freqs, freqs], dim=-1)
+    return emb.cos().to(dtype), emb.sin().to(dtype)
 
 
 def make_ctx(lens, d: Dims, device, dtype) -> SeqCtx:
@@ -68,22 +82,38 @@ def make_ctx(lens, d: Dims, device, dtype) -> SeqCtx:
     pos = torch.cat([torch.arange(n, device=device) for n in lens])
     inv_freq = 1.0 / (d.rope_theta ** (torch.arange(0, d.rotary_dim, 2, dtype=torch.float32, device=device)
                                        / d.rotary_dim))
-    freqs = pos.float()[:, None] * inv_freq[None]
-    emb = torch.cat([freqs, freqs], dim=-1)
+    cos, sin = _cos_sin(pos, inv_freq, dtype)
     mask = None
+    T = int(cu[-1])
     if len(lens) > 1:
         seg = torch.repeat_interleave(torch.arange(len(lens), device=device), torch.tensor(lens, device=device))
-        T = seg.numel()
         causal = torch.ones(T, T, dtype=torch.bool, device=device).tril_()
         mask = causal & (seg[:, None] == seg[None, :])
-    return SeqCtx(lens, cu, pos, emb.cos().to(dtype), emb.sin().to(dtype), mask)
+    ctx = SeqCtx(lens, cu, pos, cos, sin, mask)
+    if d.arch == "gemma4":
+        # global layers: "proportional" RoPE - the first global_rotary_dim/2 frequencies use the full head dim in
+        # the exponent, the rest are 0 (cos 1, sin 0: those dims are not rotated)
+        ghd, rot = d.global_head_dim, d.global_rotary_dim
+        inv_g = 1.0 / (d.global_rope_theta ** (torch.arange(0, rot, 2, dtype=torch.float32, device=device) / ghd))
+        inv_g = torch.cat([inv_g, torch.zeros(ghd // 2 - rot // 2, device=device)])
+        ctx.cos_g, ctx.sin_g = _cos_sin(pos, inv_g, dtype)
+        if max(lens) > d.sliding_window:   # the window only matters inside sequences longer than it
+            i = torch.arange(T, device=device)
+            win = (i[:, None] - i[None, :]) < d.sliding_window
+            base = mask if mask is not None else torch.ones(T, T, dtype=torch.bool, device=device).tril_()
+            ctx.sliding_mask = base & win
+    return ctx
 
 
 # ----------------------------------------------------------------------------------------------- primitives
-def rmsnorm(x, w, eps):
+def rmsnorm(x, w, eps, plus_one=True):
+    """RMSNorm in fp32: x * (1 + w) (Qwen3.5) or x * w (Gemma 4, plus_one=False); w=None: no scale."""
     xf = x.float()
-    xf = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + eps)
-    return (xf * (1.0 + w.float())).type_as(x)
+    if plus_one:
+        xf = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + eps)
+        return (xf * (1.0 + w.float())).type_as(x)
+    xf = xf * torch.pow(xf.pow(2).mean(-1, keepdim=True) + eps, -0.5)
+    return (xf if w is None else xf * w.float()).type_as(x)
 
 
 def gated_rmsnorm(x, z, w, eps):
@@ -168,6 +198,54 @@ def deltanet(x, W, d: Dims, ctx: SeqCtx):
     return F.linear(o.reshape(T, vd), W[p + "out_proj.weight"])
 
 
+def attention_gemma4(x, W, d: Dims, ctx: SeqCtx, is_global: bool):
+    T = x.shape[0]
+    p = "self_attn."
+    hd = d.global_head_dim if is_global else d.head_dim
+    n_kv = d.global_n_kv if is_global else d.n_kv
+    cos, sin = (ctx.cos_g, ctx.sin_g) if is_global else (ctx.cos, ctx.sin)
+    q = rmsnorm(F.linear(x, W[p + "q_proj.weight"]).view(T, d.n_heads, hd), W[p + "q_norm.weight"], d.eps, False)
+    k = F.linear(x, W[p + "k_proj.weight"]).view(T, n_kv, hd)
+    v = k if (is_global and d.k_eq_v) else F.linear(x, W[p + "v_proj.weight"]).view(T, n_kv, hd)
+    k = rmsnorm(k, W[p + "k_norm.weight"], d.eps, False)
+    v = rmsnorm(v, None, d.eps, False)
+    q = _rope(q.transpose(0, 1).unsqueeze(0), cos, sin)
+    k = _rope(k.transpose(0, 1).unsqueeze(0), cos, sin)
+    v = v.transpose(0, 1).unsqueeze(0)
+    rep = d.n_heads // n_kv
+    if rep > 1:
+        k = k.repeat_interleave(rep, dim=1)
+        v = v.repeat_interleave(rep, dim=1)
+    mask = ctx.attn_mask if is_global else (ctx.sliding_mask if ctx.sliding_mask is not None else ctx.attn_mask)
+    if mask is None:
+        o = F.scaled_dot_product_attention(q, k, v, is_causal=True, scale=1.0)
+    else:
+        o = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=1.0)
+    o = o.squeeze(0).transpose(0, 1).reshape(T, -1)
+    return F.linear(o, W[p + "o_proj.weight"])
+
+
+def layer_forward_gemma4(h, LW, d: Dims, ctx: SeqCtx, lora_layer=None, stats=None):
+    W = LW.W
+    x = rmsnorm(h, W["input_layernorm.weight"], d.eps, False)
+    x = attention_gemma4(x, W, d, ctx, LW.ltype == "full_attention")
+    h = h + rmsnorm(x, W["post_attention_layernorm.weight"], d.eps, False)
+    lora_sh = lora_layer.shared if lora_layer is not None else None
+    lora_ex = lora_layer.experts if lora_layer is not None else None
+    # dense MLP (gets the "shared" LoRA) and the experts read the same residual through different norms
+    m = mlp_lora(rmsnorm(h, W["pre_feedforward_layernorm.weight"], d.eps, False), W["mlp.gate_proj.weight"],
+                 W["mlp.up_proj.weight"], W["mlp.down_proj.weight"], lora_sh, d.act)
+    m = rmsnorm(m, W["post_feedforward_layernorm_1.weight"], d.eps, False)
+    probs, topv, topi = route_gemma4(h, W, d.top_k, d.eps)
+    if stats is not None:
+        stats(probs, topv, topi)
+    e = routed_experts(rmsnorm(h, W["pre_feedforward_layernorm_2.weight"], d.eps, False), topv, topi, LW.experts,
+                       lora_ex)
+    e = rmsnorm(e, W["post_feedforward_layernorm_2.weight"], d.eps, False)
+    h = h + rmsnorm(m + e, W["post_feedforward_layernorm.weight"], d.eps, False)
+    return h * W["layer_scalar"]
+
+
 class LayerWeights:
     """Device tensors of one decoder layer: dense part (dict, names relative to the layer) + routed experts."""
 
@@ -176,6 +254,8 @@ class LayerWeights:
 
 
 def layer_forward(h, LW: LayerWeights, d: Dims, ctx: SeqCtx, lora_layer=None, stats=None):
+    if d.arch == "gemma4":
+        return layer_forward_gemma4(h, LW, d, ctx, lora_layer, stats)
     W = LW.W
     x = rmsnorm(h, W["input_layernorm.weight"], d.eps)
     if LW.ltype == "linear_attention":
@@ -234,13 +314,13 @@ class LayerMajorRunner:
             if grad:
                 h = h.detach().requires_grad_(True)
                 with torch.enable_grad():
-                    hn = rmsnorm(h[rows], self.final_norm, self.d.eps)
+                    hn = rmsnorm(h[rows], self.final_norm, self.d.eps, self.d.norm_plus_one)
                     loss = chunked_ce(hn, self.lm_head, t[rows], denom)
                     loss.backward()
                 grads.append(h.grad)
             else:
                 with torch.no_grad():
-                    hn = rmsnorm(h[rows], self.final_norm, self.d.eps)
+                    hn = rmsnorm(h[rows], self.final_norm, self.d.eps, self.d.norm_plus_one)
                     loss = chunked_ce(hn, self.lm_head, t[rows], denom, need_grad=False)
             total += float(loss)
         return total, (grads if grad else None)

@@ -1,0 +1,75 @@
+# Gemma 4 26B-A4B (30 layers: 25 sliding-window + 5 global, 128 experts, dense MLP in parallel).
+# Relative paths are resolved against the repository root. Put heavy data on a fast local disk
+# (not a synced folder): the model is ~52 GB, work_dir needs ~15-25 GB.
+paths:
+  model_dir: data/gemma-4-26B-A4B-it   # original bf16 safetensors (never modified); scripts/download.py --repo google/gemma-4-26B-A4B-it
+  work_dir: work/gemma4                # probe states, cache, packed block, checkpoints
+  tokenizer: null                      # null = tokenizer files from model_dir
+  domain_data: data/domain.jsonl       # your chat jsonl: {"messages": [{"role": ..., "content": ...}, ...]}
+  general_data: data/general.jsonl     # reference text: chat jsonl or {"text": ...}; scripts/make_general.py
+  artifacts: artifacts/gemma4          # adapters, routing stats
+  reports: reports/gemma4
+  logs: logs
+  progress: logs/progress_gemma4.md    # every stage appends a short summary here
+  selection: configs/selection_gemma4.yaml
+
+# Optional: llama.cpp build for GGUF export / evaluation (or env SMEL_LLAMA_CPP_DIR).
+# The directory must contain ggml-base.dll / libggml-base.so (export) and llama-server (evaluation).
+llamacpp:
+  dir: null
+
+data:
+  think_in_loss: false      # exclude the template's empty <think></think> block from the loss
+  max_len: 2048
+  n_val: 30                 # domain dialogs for validation during training
+  n_eval: 50                # domain dialogs held out for final perplexity / prompts
+  general_eval_frac: 0.5    # part of the general set kept for "did it forget" perplexity
+  seed: 0
+
+probe:
+  mb_tokens: 8192
+  max_domain_tokens: 200000
+  max_general_tokens: 200000
+  cache_candidates: [8, 10, 12, 15, 18, 20, 24]   # save layer inputs at these L during probe (free cache)
+  state_every: 5            # write a resumable probe state every N layers
+
+select:
+  stats_view: resp          # 'resp' = only answer tokens, 'all' = every token
+  coverage: 0.7             # L = largest layer with sum_{l>=L} D_l >= coverage * sum D_l
+  divergence: kl            # kl | js
+  mass_p: 0.5               # per-layer domain gate mass to cover with selected experts
+  k_max: 12
+  L_override: null          # force the cut layer L instead of the data-driven one
+  vram_budget_gb: 7.0       # an 8 GB card that also drives the display
+  ram_budget_gb: 12.0
+  pin_budget_gb: 9.0        # pinned host RAM for the streamed block (WDDM refuses >7 GB in one block)
+
+model:
+  quant_group: 64           # int4 group size for frozen experts
+  expert_group: 32          # experts dequantized at once on the GPU
+  lm_head_int8: true
+  dense_int8: false
+
+train:
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  shared_lora: true
+  lr: 1.0e-4
+  weight_decay: 0.0
+  warmup_frac: 0.03
+  min_lr_frac: 0.0
+  epochs: 3
+  tokens_per_step: 8192
+  mb_tokens: 4096
+  grad_clip: 1.0
+  seed: 0
+  log_every: 1
+  val_every: 5
+  monitor_every: 5
+  monitor_tokens: 4096
+  monitor_drop_warn: 0.2
+  ckpt_every: 10
+  resident: auto            # keep the whole block on GPU if it fits
+  pin: true
+  ckpt_device: cuda         # where layer-input checkpoints live during a step (cuda | cpu)

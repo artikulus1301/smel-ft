@@ -85,23 +85,45 @@ def _groups(counts: list, group: int):
         row += n
 
 
-def frozen_experts_forward(xs, counts, bank, group):
+_GELU_C = 0.7978845608028654  # sqrt(2 / pi)
+
+
+def act(x: torch.Tensor, name: str) -> torch.Tensor:
+    if name == "silu":
+        return F.silu(x)
+    if name == "gelu_tanh":
+        return F.gelu(x, approximate="tanh")
+    raise ValueError(f"unknown activation {name}")
+
+
+def act_and_grad(g: torch.Tensor, name: str):
+    """(act(g), d act / d g) in the dtype of g (called with fp32)."""
+    if name == "silu":
+        sg = torch.sigmoid(g)
+        return g * sg, sg * (1 + g * (1 - sg))
+    if name == "gelu_tanh":
+        t = torch.tanh(_GELU_C * (g + 0.044715 * g ** 3))
+        return 0.5 * g * (1 + t), 0.5 * (1 + t) + 0.5 * g * (1 - t * t) * _GELU_C * (1 + 3 * 0.044715 * g * g)
+    raise ValueError(f"unknown activation {name}")
+
+
+def frozen_experts_forward(xs, counts, bank, group, act_name="silu"):
     out = xs.new_empty(xs.shape[0], xs.shape[1])
     for e0, e1, r0, r1, sub in _groups(counts, group):
         gu, dn = bank.weights(e0, e1)
         h = _gmm(xs[r0:r1], gu, sub)
         g, u = h.chunk(2, dim=-1)
-        out[r0:r1] = _gmm(F.silu(g) * u, dn, sub)
+        out[r0:r1] = _gmm(act(g, act_name) * u, dn, sub)
     return out
 
 
 class FrozenExpertsFn(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, xs, counts, bank, group):
+    def forward(ctx, xs, counts, bank, group, act_name="silu"):
         ctx.save_for_backward(xs)
-        ctx.counts, ctx.bank, ctx.group = counts, bank, group
+        ctx.counts, ctx.bank, ctx.group, ctx.act = counts, bank, group, act_name
         with torch.no_grad():
-            return frozen_experts_forward(xs, counts, bank, group)
+            return frozen_experts_forward(xs, counts, bank, group, act_name)
 
     @staticmethod
     def backward(ctx, dy):
@@ -113,23 +135,23 @@ class FrozenExpertsFn(torch.autograd.Function):
             h = _gmm(xs[r0:r1], gu, sub)
             g, u = h.float().chunk(2, dim=-1)
             da = _gmm(dy[r0:r1], dn, sub, transpose_w=False).float()  # y = a @ dn.T  ->  da = dy @ dn
-            sg = torch.sigmoid(g)
-            silu = g * sg
-            dg = da * u * (sg * (1 + g * (1 - sg)))
-            du = da * silu
+            a, da_dg = act_and_grad(g, ctx.act)
+            dg = da * u * da_dg
+            du = da * a
             dh = torch.cat([dg, du], dim=-1).to(xs.dtype)
             dx[r0:r1] = _gmm(dh, gu, sub, transpose_w=False)
-        return dx, None, None, None
+        return dx, None, None, None, None
 
 
 class LayerExperts:
     """Routed experts of one layer: a frozen bank for all E experts plus optional trainable bf16 copies of the
     selected experts (their frozen-bank copy is then ignored)."""
 
-    def __init__(self, frozen, sel_ids=None, sel_gate_up=None, sel_down=None, group: int = 32):
+    def __init__(self, frozen, sel_ids=None, sel_gate_up=None, sel_down=None, group: int = 32, act: str = "silu"):
         self.frozen = frozen
         self.E = frozen.num_experts
         self.group = group
+        self.act = act
         self.sel_ids = None if sel_ids is None else torch.as_tensor(sel_ids, dtype=torch.long)
         self.sel_gate_up, self.sel_down = sel_gate_up, sel_down
         self._slot = {}
@@ -145,26 +167,44 @@ def route(x2d, gate_w, top_k):
     return probs, topv.to(logits.dtype), topi
 
 
-def shared_mlp(x, W, lora):
-    pre = "mlp.shared_expert."
+def route_gemma4(h, W, top_k, eps):
+    """Gemma 4 router on the residual stream: RMSNorm without weight, x scale x H^-0.5 -> logits -> softmax (fp32)
+    -> top-k, renormalized, x per_expert_scale of the chosen experts."""
+    hf = h.float()
+    x = (hf * torch.pow(hf.pow(2).mean(-1, keepdim=True) + eps, -0.5)).type_as(h)
+    x = x * W["router.scale"] * h.shape[-1] ** -0.5
+    logits = F.linear(x, W["router.proj.weight"])
+    probs = torch.softmax(logits, dim=-1, dtype=torch.float32)
+    topv, topi = torch.topk(probs, top_k, dim=-1)
+    topv = topv / topv.sum(dim=-1, keepdim=True)
+    return probs, topv * W["router.per_expert_scale"][topi], topi
+
+
+def mlp_lora(x, w_gate, w_up, w_down, lora, act_name="silu"):
+    """Gated MLP down(act(gate(x)) * up(x)) with optional LoRA on all three projections."""
     A = (lambda n: getattr(lora, "A_" + n)) if lora is not None else (lambda n: None)
     B = (lambda n: getattr(lora, "B_" + n)) if lora is not None else (lambda n: None)
     s = lora.scale if lora is not None else 0.0
-    g = lora_linear(x, W[pre + "gate_proj.weight"], A("gate"), B("gate"), s)
-    u = lora_linear(x, W[pre + "up_proj.weight"], A("up"), B("up"), s)
-    y = lora_linear(F.silu(g) * u, W[pre + "down_proj.weight"], A("down"), B("down"), s)
+    g = lora_linear(x, w_gate, A("gate"), B("gate"), s)
+    u = lora_linear(x, w_up, A("up"), B("up"), s)
+    return lora_linear(act(g, act_name) * u, w_down, A("down"), B("down"), s)
+
+
+def shared_mlp(x, W, lora):
+    pre = "mlp.shared_expert."
+    y = mlp_lora(x, W[pre + "gate_proj.weight"], W[pre + "up_proj.weight"], W[pre + "down_proj.weight"], lora)
     return y * torch.sigmoid(F.linear(x, W["mlp.shared_expert_gate.weight"]))
 
 
-def _selected_expert(x, gu, dn, lora, j):
+def _selected_expert(x, gu, dn, lora, j, act_name="silu"):
     I = dn.shape[1]
     if lora is None:
         g, u = (x @ gu.t()).chunk(2, dim=-1)
-        return (F.silu(g) * u) @ dn.t()
+        return (act(g, act_name) * u) @ dn.t()
     s = lora.scale
     g = lora_linear(x, gu[:I], lora.A_gate[j], lora.B_gate[j], s)
     u = lora_linear(x, gu[I:], lora.A_up[j], lora.B_up[j], s)
-    return lora_linear(F.silu(g) * u, dn, lora.A_down[j], lora.B_down[j], s)
+    return lora_linear(act(g, act_name) * u, dn, lora.A_down[j], lora.B_down[j], s)
 
 
 def routed_experts(x2d, topv, topi, ex: LayerExperts, lora=None):
@@ -179,7 +219,7 @@ def routed_experts(x2d, topv, topi, ex: LayerExperts, lora=None):
     xs = x2d[tok]
 
     if ex.sel_ids is None or len(ex._slot) == 0:
-        y = FrozenExpertsFn.apply(xs, counts_t.tolist(), ex.frozen, ex.group)
+        y = FrozenExpertsFn.apply(xs, counts_t.tolist(), ex.frozen, ex.group, ex.act)
     else:
         sel_mask_e = torch.zeros(ex.E, dtype=torch.bool, device=x2d.device)
         sel_mask_e[ex.sel_ids.to(x2d.device)] = True
@@ -189,7 +229,7 @@ def routed_experts(x2d, topv, topi, ex: LayerExperts, lora=None):
         fr_rows = (~row_sel).nonzero().squeeze(1)
         if fr_rows.numel():
             rows.append(fr_rows)
-            vals.append(FrozenExpertsFn.apply(xs[fr_rows], counts_f, ex.frozen, ex.group))
+            vals.append(FrozenExpertsFn.apply(xs[fr_rows], counts_f, ex.frozen, ex.group, ex.act))
         starts = (counts_t.cumsum(0) - counts_t).tolist()
         counts = counts_t.tolist()
         for e, j in ex._slot.items():
@@ -198,7 +238,8 @@ def routed_experts(x2d, topv, topi, ex: LayerExperts, lora=None):
                 continue
             r0 = starts[e]
             rows.append(torch.arange(r0, r0 + c, device=x2d.device))
-            vals.append(_selected_expert(xs[r0:r0 + c], ex.sel_gate_up[j], ex.sel_down[j], lora, j).to(x2d.dtype))
+            vals.append(_selected_expert(xs[r0:r0 + c], ex.sel_gate_up[j], ex.sel_down[j], lora, j, ex.act)
+                        .to(x2d.dtype))
         y = x2d.new_zeros(xs.shape[0], H).index_put((torch.cat(rows),), torch.cat(vals))
     # deterministic combine (no atomics): undo the sort and sum the K expert outputs of each token in fp32
     inv = torch.empty_like(order)

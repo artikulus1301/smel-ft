@@ -19,7 +19,7 @@ logs/
 
 # Run-specific configs written by the scripts
 configs/selection*.yaml
-configs/tiny_e2e.yaml
+configs/tiny_e2e*.yaml
 
 # Secrets / local
 .env

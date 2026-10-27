@@ -1,6 +1,6 @@
 """Stage 3: choose the cut layer L and the trainable experts per layer; estimate VRAM / RAM / time.
 
-Output: configs/selection.yaml and reports/select.md.
+Output: paths.selection (configs/selection.yaml) and reports/select.md.
 Usage: python scripts/select_experts.py [--set select.L_override=30 select.k_max=12]
 """
 import os
@@ -52,23 +52,19 @@ def choose_experts(gm_l, mass_p, k_max):
     return sorted(srt.indices[:k].tolist()), float(srt.values[:k].sum())
 
 
-def estimate(d: Dims, L, sel, cfg, tokens_per_step, mb_tokens, n_train_tokens, bench=None):
-    """Memory/time estimate from tensor shapes (bytes) and the measured layer benchmark."""
+def estimate(d: Dims, L, sel, cfg, tokens_per_step, mb_tokens, n_train_tokens, bench=None, dense_bytes=None):
+    """Memory/time estimate from tensor shapes (bytes) and the measured layer benchmark. dense_bytes[l] = bf16
+    bytes of everything in layer l except the routed experts (read from the checkpoint)."""
     H, I, E, g = d.hidden, d.moe_inter, d.n_experts, cfg["model"]["quant_group"]
     r = cfg["train"]["r"]
     n_block = d.n_layers - L
     int4_bank = E * (3 * H * I) * 0.5 + E * (3 * H * I) / g * 2 * 2  # nibbles + bf16 scale & zero
-    lin = d.hidden * (2 * d.lin_k_heads * d.lin_k_dim + d.lin_v_heads * d.lin_v_dim) \
-        + d.hidden * d.lin_v_heads * d.lin_v_dim * 2 + 2 * d.hidden * d.lin_v_heads
-    att = d.hidden * (2 * d.n_heads * d.head_dim + 2 * d.n_kv * d.head_dim) + d.n_heads * d.head_dim * d.hidden
-    common = E * H + 3 * H * d.shared_inter + H
-    dense = {"linear_attention": (lin + common) * 2, "full_attention": (att + common) * 2}
     layer_bytes, sel_bytes, lora_params = {}, 0, 0
     for l in range(L, d.n_layers):
         k = len(sel[l])
         sb = k * 3 * H * I * 2
         sel_bytes += sb
-        layer_bytes[l] = dense[d.layer_types[l]] + int4_bank + sb
+        layer_bytes[l] = dense_bytes[l] + int4_bank + sb
         lora_params += k * 3 * r * (H + I) + (3 * r * (H + d.shared_inter) if cfg["train"]["shared_lora"] else 0)
     block = sum(layer_bytes.values())
     head = d.vocab * H * (1 if cfg["model"]["lm_head_int8"] else 2) + d.vocab * 2 + H * 2
@@ -112,10 +108,11 @@ def main():
     ap.add_argument("--config")
     ap.add_argument("--set", nargs="*", default=[])
     ap.add_argument("--stats", default=None)
-    ap.add_argument("--out", default=os.path.join(ROOT, "configs", "selection.yaml"))
+    ap.add_argument("--out", default=None, help="default: paths.selection")
     args = ap.parse_args()
     cfg = load_config(args.config, parse_overrides(args.set))
     sc = cfg["select"]
+    args.out = args.out or cfg["paths"]["selection"]
     raw = torch.load(args.stats or os.path.join(cfg["paths"]["artifacts"], "routing_stats.pt"))
     d = Dims(**raw["dims"])
     kl, js, GM = divergences(raw, sc["stats_view"])
@@ -128,14 +125,20 @@ def main():
     split = z["split"]
     lens = np.diff(z["offsets"])
     n_train = int(lens[split == "train"].sum())
-    bench = load_bench()
+    bench = load_bench() if d.arch == "qwen3_5_moe" else None   # the layer benchmark is Qwen-specific
+    from smel.model_io import Checkpoint
+    ck = Checkpoint(cfg["paths"]["model_dir"])
+    dense_b = {}
+    for l in range(d.n_layers):
+        names = [n for n in ck.layer_names(l) if "experts." not in n]
+        dense_b[l] = sum(2 * int(torch.tensor(ck.shape(n)).prod()) for n in names)
     k_max = sc["k_max"]
     notes = []
     while True:
         sel, cov = {}, {}
         for l in range(L, d.n_layers):
             sel[l], cov[l] = choose_experts(GM["domain"][l], sc["mass_p"], k_max)
-        est = estimate(d, L, sel, cfg, cfg["train"]["tokens_per_step"], cfg["train"]["mb_tokens"], n_train, bench)
+        est = estimate(d, L, sel, cfg, cfg["train"]["tokens_per_step"], cfg["train"]["mb_tokens"], n_train, bench, dense_b)
         fits_res = est["vram_resident_GB"] <= sc["vram_budget_gb"]
         fits_stream = est["vram_stream_GB"] <= sc["vram_budget_gb"] and est["pinned_GB_if_stream"] <= sc["pin_budget_gb"]
         fits_disk_stream = est["vram_stream_GB"] <= sc["vram_budget_gb"]

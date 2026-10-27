@@ -25,7 +25,7 @@ def main():
     ap.add_argument("--L", type=int, default=None)
     args = ap.parse_args()
     cfg = load_config(args.config, parse_overrides(args.set))
-    L = args.L if args.L is not None else yaml.safe_load(open(os.path.join(ROOT, "configs", "selection.yaml")))["L"]
+    L = args.L if args.L is not None else yaml.safe_load(open(cfg["paths"]["selection"]))["L"]
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(cfg["paths"]["tokenizer"])
     sets = build_token_sets(cfg, tok)

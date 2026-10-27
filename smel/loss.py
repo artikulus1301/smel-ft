@@ -1,7 +1,8 @@
 """Chunked cross-entropy over a frozen lm_head (bf16 or int8 rows) without materializing [T, 248k] logits.
 
 The gradient w.r.t. the hidden states is computed in the same pass as the loss (lm_head is frozen) and returned by
-backward, so peak memory is one [token_chunk, vocab_chunk] fp32 tile.
+backward, so peak memory is one [token_chunk, vocab_chunk] fp32 tile. Optional final-logit softcapping
+(Gemma: logits = cap * tanh(z / cap)) is applied inside the same pass, gradient included.
 """
 import torch
 
@@ -9,21 +10,28 @@ from .quant import dequant_int8_rows, quantize_int8_rows
 
 
 class LMHead:
-    def __init__(self, weight: torch.Tensor | None = None, int8: dict | None = None, vocab_chunk: int = 32768):
+    def __init__(self, weight: torch.Tensor | None = None, int8: dict | None = None, vocab_chunk: int = 32768,
+                 softcap: float = 0.0):
         assert (weight is None) != (int8 is None)
         self.w, self.q = weight, int8
         self.vocab = weight.shape[0] if weight is not None else int8["q"].shape[0]
         self.vocab_chunk = vocab_chunk
+        self.softcap = float(softcap or 0.0)
 
     @classmethod
-    def from_weight(cls, w, int8=False, vocab_chunk=32768):
-        return cls(int8=quantize_int8_rows(w), vocab_chunk=vocab_chunk) if int8 else cls(weight=w,
-                                                                                        vocab_chunk=vocab_chunk)
+    def from_weight(cls, w, int8=False, vocab_chunk=32768, softcap=0.0):
+        if int8:
+            return cls(int8=quantize_int8_rows(w), vocab_chunk=vocab_chunk, softcap=softcap)
+        return cls(weight=w, vocab_chunk=vocab_chunk, softcap=softcap)
 
     def to(self, device):
         if self.w is not None:
-            return LMHead(weight=self.w.to(device), vocab_chunk=self.vocab_chunk)
-        return LMHead(int8={k: v.to(device) for k, v in self.q.items()}, vocab_chunk=self.vocab_chunk)
+            return LMHead(weight=self.w.to(device), vocab_chunk=self.vocab_chunk, softcap=self.softcap)
+        return LMHead(int8={k: v.to(device) for k, v in self.q.items()}, vocab_chunk=self.vocab_chunk,
+                      softcap=self.softcap)
+
+    def cap(self, z: torch.Tensor) -> torch.Tensor:
+        return self.softcap * torch.tanh(z / self.softcap) if self.softcap else z
 
     def rows(self, v0, v1, dtype):
         if self.w is not None:
@@ -35,7 +43,8 @@ class LMHead:
             yield v0, min(self.vocab, v0 + self.vocab_chunk)
 
     def logits(self, h):
-        return torch.cat([(h @ self.rows(v0, v1, h.dtype).t()).float() for v0, v1 in self.chunks()], dim=-1)
+        return torch.cat([self.cap((h @ self.rows(v0, v1, h.dtype).t()).float()) for v0, v1 in self.chunks()],
+                         dim=-1)
 
 
 def _ce_chunk(h, head: LMHead, tgt, need_grad):
@@ -45,7 +54,7 @@ def _ce_chunk(h, head: LMHead, tgt, need_grad):
     s = torch.zeros(n, device=h.device)
     tgt_logit = torch.zeros(n, device=h.device)
     for v0, v1 in head.chunks():
-        lg = (h @ head.rows(v0, v1, h.dtype).t()).float()
+        lg = head.cap((h @ head.rows(v0, v1, h.dtype).t()).float())
         cm = lg.amax(-1)
         nm = torch.maximum(m, cm)
         s = s * (m - nm).exp() + (lg - nm[:, None]).exp().sum(-1)
@@ -61,11 +70,14 @@ def _ce_chunk(h, head: LMHead, tgt, need_grad):
     gh = torch.zeros(h.shape, device=h.device, dtype=torch.float32)
     for v0, v1 in head.chunks():
         W = head.rows(v0, v1, h.dtype)
-        p = ((h @ W.t()).float() - lse[:, None]).exp()
+        lg = head.cap((h @ W.t()).float())
+        p = (lg - lse[:, None]).exp()
         inside = (tgt >= v0) & (tgt < v1)
         if inside.any():
             idx = inside.nonzero().squeeze(1)
             p[idx, tgt[idx] - v0] -= 1.0
+        if head.softcap:
+            p = p * (1 - (lg / head.softcap) ** 2)   # d cap*tanh(z/cap) / dz
         gh += p.to(h.dtype) @ W
     return loss, gh
 

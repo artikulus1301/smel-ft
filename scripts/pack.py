@@ -38,15 +38,15 @@ def head_tensors(ck, int8=True):
     return out
 
 
-def load_head(path, device="cuda"):
+def load_head(path, device="cuda", softcap=0.0):
     from safetensors import safe_open
     with safe_open(path, "pt") as f:
         t = {k: f.get_tensor(k) for k in f.keys()}
     norm = t["norm.weight"].to(device)
     if "lm_head.q" in t:
-        head = LMHead(int8={"q": t["lm_head.q"].to(device), "scale": t["lm_head.scale"].to(device)})
+        head = LMHead(int8={"q": t["lm_head.q"].to(device), "scale": t["lm_head.scale"].to(device)}, softcap=softcap)
     else:
-        head = LMHead(weight=t["lm_head.weight"].to(device))
+        head = LMHead(weight=t["lm_head.weight"].to(device), softcap=softcap)
     return norm, head
 
 
@@ -55,11 +55,11 @@ def main():
     ap.add_argument("--config")
     ap.add_argument("--set", nargs="*", default=[])
     ap.add_argument("--verify-n", type=int, default=50)
-    ap.add_argument("--selection", default=os.path.join(ROOT, "configs", "selection.yaml"))
+    ap.add_argument("--selection", default=None, help="default: paths.selection")
     ap.add_argument("--no-write", action="store_true", help="only verify (quantizing on the fly)")
     args = ap.parse_args()
     cfg = load_config(args.config, parse_overrides(args.set))
-    sel = yaml.safe_load(open(args.selection))
+    sel = yaml.safe_load(open(args.selection or cfg["paths"]["selection"]))
     L = sel["L"]
     experts = {int(k): v for k, v in sel["experts"].items()}
     ck = Checkpoint(cfg["paths"]["model_dir"])
@@ -105,13 +105,14 @@ def main():
     for name in ("bf16", "packed"):
         if name == "bf16":
             src = CheckpointSource(ck, "cuda")
-            head = LMHead.from_weight(ck.get(ck.lm_head_name()).cuda())
+            head = LMHead.from_weight(ck.get(ck.lm_head_name()).cuda(), softcap=d.logit_softcap)
         elif args.no_write:
             src = CheckpointSource(ck, "cuda", selection=experts, frozen="int4", quant_group=cfg["model"]["quant_group"])
-            head = LMHead.from_weight(ck.get(ck.lm_head_name()).cuda(), int8=cfg["model"]["lm_head_int8"])
+            head = LMHead.from_weight(ck.get(ck.lm_head_name()).cuda(), int8=cfg["model"]["lm_head_int8"],
+                                      softcap=d.logit_softcap)
         else:
             src = PackedSource(out, d, layers, "cuda")
-            norm_w, head = load_head(os.path.join(out, "head.safetensors"))
+            norm_w, head = load_head(os.path.join(out, "head.safetensors"), softcap=d.logit_softcap)
         run = LayerMajorRunner(d, src, layers, None, norm_w, head)
         hs = [store.read(mb_rows(ts, mb)).cuda() for mb in mbs]
         ctxs = [make_ctx([ts.lengths[i] for i in mb], d, "cuda", torch.bfloat16) for mb in mbs]
@@ -119,7 +120,7 @@ def main():
         denom = sum(int((t != -100).sum()) for t in tg)
         loss = run.eval_loss([h.clone() for h in hs], ctxs, tg, denom)
         hs, _ = run.forward(hs, ctxs)
-        res[name] = {"loss": loss, "h": torch.cat([rmsnorm(h, norm_w, d.eps) for h in hs]).float().cpu()}
+        res[name] = {"loss": loss, "h": torch.cat([rmsnorm(h, norm_w, d.eps, d.norm_plus_one) for h in hs]).float().cpu()}
         src.close()
     e_h = rel_err(res["packed"]["h"], res["bf16"]["h"])
     lb, lp = res["bf16"]["loss"], res["packed"]["loss"]

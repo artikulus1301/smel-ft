@@ -118,20 +118,27 @@ class Imatrix:
         return vals.astype(np.float32)
 
 
-def hf_to_gguf_tensors(l, gate_up=None, down=None, shared=None):
-    """Map merged HF tensors of layer l to GGUF names -> float32 [n_mat, rows, n_per_row]."""
+def hf_to_gguf_tensors(l, gate_up=None, down=None, shared=None, arch="qwen3_5_moe", fused_gate_up=False):
+    """Map merged HF tensors of layer l to GGUF names -> float32 [n_mat, rows, n_per_row].
+
+    Experts: ffn_{gate,up,down}_exps, or ffn_gate_up_exps when the GGUF keeps gate and up fused (HF order: gate
+    rows first). The MLP trained next to them: Qwen's shared expert (ffn_*_shexp) or Gemma 4's dense MLP (ffn_*)."""
     out = {}
     if gate_up is not None:
         I = down.shape[2]
         gu = gate_up.float().numpy()
-        out[f"blk.{l}.ffn_gate_exps.weight"] = gu[:, :I, :]
-        out[f"blk.{l}.ffn_up_exps.weight"] = gu[:, I:, :]
+        if fused_gate_up:
+            out[f"blk.{l}.ffn_gate_up_exps.weight"] = gu
+        else:
+            out[f"blk.{l}.ffn_gate_exps.weight"] = gu[:, :I, :]
+            out[f"blk.{l}.ffn_up_exps.weight"] = gu[:, I:, :]
         out[f"blk.{l}.ffn_down_exps.weight"] = down.float().numpy()
     if shared is not None:
         g, u, dn = shared
-        out[f"blk.{l}.ffn_gate_shexp.weight"] = g.float().numpy()[None]
-        out[f"blk.{l}.ffn_up_shexp.weight"] = u.float().numpy()[None]
-        out[f"blk.{l}.ffn_down_shexp.weight"] = dn.float().numpy()[None]
+        sfx = "" if arch == "gemma4" else "_shexp"
+        out[f"blk.{l}.ffn_gate{sfx}.weight"] = g.float().numpy()[None]
+        out[f"blk.{l}.ffn_up{sfx}.weight"] = u.float().numpy()[None]
+        out[f"blk.{l}.ffn_down{sfx}.weight"] = dn.float().numpy()[None]
     return out
 
 

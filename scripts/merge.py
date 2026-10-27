@@ -36,17 +36,15 @@ def main():
     ck = Checkpoint(src_dir)
     d = ck.dims
     lora, meta = BlockLoRA.load(args.adapter, d)
-    P = ck.prefix
-    changes = {}  # tensor name -> callable producing the merged tensor
+    changes = {}  # checkpoint tensor name -> (kind, layer)
     for key, LL in lora.layers.items():
         l = int(key)
-        base = f"{P}layers.{l}.mlp."
         if LL.experts is not None:
-            changes[base + "experts.gate_up_proj"] = ("experts", l)
-            changes[base + "experts.down_proj"] = ("experts", l)
-        if LL.shared is not None:
-            for n in ("gate_proj", "up_proj", "down_proj"):
-                changes[base + f"shared_expert.{n}.weight"] = ("shared", l)
+            for short in ("mlp.experts.gate_up_proj", "mlp.experts.down_proj"):
+                changes[ck.full_name(l, short)] = ("experts", l)
+        if LL.shared is not None:   # Qwen: shared expert; Gemma 4: the dense MLP
+            for n in ck.shared_mlp_names(l):
+                changes[n] = ("shared", l)
     shards = sorted(set(ck.weight_map.values()))
     touched = sorted({ck.weight_map[n] for n in changes})
     need = sum(os.path.getsize(os.path.join(src_dir, s)) for s in touched)
@@ -81,24 +79,19 @@ def main():
                 continue
             kind, l = changes[name]
             LL = lora.get(l)
-            base = f"{P}layers.{l}.mlp."
             if kind == "experts":
                 if ("experts", l) not in cache:
-                    gu = ck.get(base + "experts.gate_up_proj").cuda()
-                    dn = ck.get(base + "experts.down_proj").cuda()
-                    gu, dn = merge_experts(gu, dn, LL.experts)
-                    cache[("experts", l)] = {base + "experts.gate_up_proj": gu.cpu(),
-                                             base + "experts.down_proj": dn.cpu()}
+                    gu_n, dn_n = ck.full_name(l, "mlp.experts.gate_up_proj"), ck.full_name(l, "mlp.experts.down_proj")
+                    gu, dn = merge_experts(ck.get(gu_n).cuda(), ck.get(dn_n).cuda(), LL.experts)
+                    cache[("experts", l)] = {gu_n: gu.cpu(), dn_n: dn.cpu()}
                 tensors[name] = cache[("experts", l)].pop(name)
                 if not cache[("experts", l)]:
                     del cache[("experts", l)]
             else:
                 if ("shared", l) not in cache:
-                    ws = [ck.get(base + f"shared_expert.{n}.weight").cuda() for n in ("gate_proj", "up_proj",
-                                                                                      "down_proj")]
-                    m = merge_mlp(*ws, LL.shared)
-                    cache[("shared", l)] = {base + f"shared_expert.{n}.weight": t.cpu()
-                                            for n, t in zip(("gate_proj", "up_proj", "down_proj"), m)}
+                    names = ck.shared_mlp_names(l)
+                    m = merge_mlp(*[ck.get(n).cuda() for n in names], LL.shared)
+                    cache[("shared", l)] = {n: t.cpu() for n, t in zip(names, m)}
                 tensors[name] = cache[("shared", l)].pop(name)
                 if not cache[("shared", l)]:
                     del cache[("shared", l)]
@@ -117,14 +110,13 @@ def main():
             a, b = ck.get(name).float(), ck2.get(name).float()
             LL = lora.get(l)
             if kind == "experts":
-                gu, dn = merge_experts(ck.get(name.replace("down_proj", "gate_up_proj")).cuda(),
-                                       ck.get(name.replace("gate_up_proj", "down_proj")).cuda(), LL.experts)
+                gu, dn = merge_experts(ck.get(ck.full_name(l, "mlp.experts.gate_up_proj")).cuda(),
+                                       ck.get(ck.full_name(l, "mlp.experts.down_proj")).cuda(), LL.experts)
                 want = (gu if "gate_up" in name else dn).float().cpu()
             else:
-                ws = [ck.get(f"{P}layers.{l}.mlp.shared_expert.{n}.weight").cuda() for n in ("gate_proj", "up_proj",
-                                                                                             "down_proj")]
-                m = dict(zip(("gate_proj", "up_proj", "down_proj"), merge_mlp(*ws, LL.shared)))
-                want = m[name.split(".")[-2]].float().cpu()
+                names = ck.shared_mlp_names(l)
+                m = dict(zip(names, merge_mlp(*[ck.get(n).cuda() for n in names], LL.shared)))
+                want = m[name].float().cpu()
             worst = max(worst, float((b - want).abs().max()))
             assert not torch.equal(a, b) or float((want - a).abs().max()) == 0.0
         msg += f"\n- verify: merged tensors == base + delta (max abs diff {worst:.2e})"

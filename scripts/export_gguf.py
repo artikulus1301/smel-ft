@@ -61,22 +61,21 @@ def main():
     else:
         shutil.copyfile(args.base_gguf, tmp)
     tgt, im, g = GGUFTarget(tmp), (Imatrix(args.imatrix) if args.imatrix else None), GGMLProc(cfg["llamacpp"]["dir"])
-    P = ck.prefix
     report = []
     with open(tmp, "r+b") as fh:
         for key, LL in lora.layers.items():
             l = int(key)
-            base = f"{P}layers.{l}.mlp."
             gu = dn = sh = None
             if LL.experts is not None:
-                gu, dn = merge_experts(ck.get(base + "experts.gate_up_proj").cuda(),
-                                       ck.get(base + "experts.down_proj").cuda(), LL.experts)
+                gu, dn = merge_experts(ck.get(ck.full_name(l, "mlp.experts.gate_up_proj")).cuda(),
+                                       ck.get(ck.full_name(l, "mlp.experts.down_proj")).cuda(), LL.experts)
                 gu, dn = gu.cpu(), dn.cpu()
             if LL.shared is not None:
-                ws = [ck.get(base + f"shared_expert.{n}.weight").cuda() for n in ("gate_proj", "up_proj", "down_proj")]
+                ws = [ck.get(n).cuda() for n in ck.shared_mlp_names(l)]
                 sh = [t.cpu() for t in merge_mlp(*ws, LL.shared)]
             ids = LL.experts.expert_ids.tolist() if LL.experts is not None else []
-            for tname, w in hf_to_gguf_tensors(l, gu, dn, sh).items():
+            fused = f"blk.{l}.ffn_gate_up_exps.weight" in tgt.info
+            for tname, w in hf_to_gguf_tensors(l, gu, dn, sh, ck.arch, fused).items():
                 qtype, off, nb, tyname = tgt.info[tname]
                 imx = im.get(tname) if im else None
                 if "_exps" in tname:
