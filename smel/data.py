@@ -20,7 +20,8 @@ class ChatSpec:
 
 QWEN_SPEC = ChatSpec("<|im_start|>assistant\n", "<|im_end|>", "<think>", "</think>", "")
 # Gemma 4: history turns are rendered without a thought channel, but generation with thinking off starts the
-# answer after an empty one ("<|channel>thought\n<channel|>") - training adds it so both look the same
+# answer after an empty one ("<|channel>thought\n<channel|>"). Training adds it to the last answer only, so every
+# training sequence looks exactly like a real conversation at inference: plain history, then the current answer
 GEMMA4_SPEC = ChatSpec("<|turn>model\n", "<turn|>", "<|channel>", "<channel|>", "<|channel>thought\n<channel|>")
 
 
@@ -39,17 +40,17 @@ def load_jsonl(path):
 
 
 def add_empty_think(text: str, spec: ChatSpec) -> str:
+    """Insert the template's empty reasoning block before the LAST assistant answer (the one being generated at
+    inference); earlier answers stay as the template renders history."""
     if not spec.empty_think:
         return text
-    out, pos = [], 0
-    while (i := text.find(spec.header, pos)) >= 0:
-        s = i + len(spec.header)
-        out.append(text[pos:s])
-        if not text.startswith(spec.think_open, s):
-            out.append(spec.empty_think)
-        pos = s
-    out.append(text[pos:])
-    return "".join(out)
+    i = text.rfind(spec.header)
+    if i < 0:
+        return text
+    s = i + len(spec.header)
+    if text.startswith(spec.think_open, s):
+        return text
+    return text[:s] + spec.empty_think + text[s:]
 
 
 def assistant_spans(text: str, think_in_loss: bool = False, spec: ChatSpec = QWEN_SPEC):

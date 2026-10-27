@@ -323,5 +323,8 @@ def test_gemma4_chat_masks():
             pieces.append(tok.decode(cur))
             cur = []
     assert pieces == ["Ну привет.<turn|>", "Нормально, отстань.<turn|>"]
-    gen = tok.apply_chat_template(m[:2], tokenize=False, add_generation_prompt=True)
-    assert tok.decode(ids).startswith(gen)     # training prefix == generation prompt with thinking off
+    # the training text up to the last answer == the generation prompt for that answer (history without a thought
+    # channel, the answer after an empty one), exactly what llama-server feeds with thinking off
+    gen = tok.apply_chat_template(m[:4], tokenize=False, add_generation_prompt=True, enable_thinking=False)
+    assert tok.decode(ids).startswith(gen)
+    assert tok.decode(ids).count("<|channel>") == 1
