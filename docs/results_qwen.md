@@ -1,4 +1,4 @@
-# Reference experiment: Qwen3.6-35B-A3B on a laptop
+# Reference experiment 1: Qwen3.6-35B-A3B on a laptop
 
 Everything below was run end to end with this repository on one machine. The task was a persona
 fine-tune: a Russian-speaking character with a distinct voice (short, sarcastic answers in the first person,
@@ -30,7 +30,7 @@ never "as an AI..."). The dataset itself is private and not part of the reposito
 
 ## Router probe
 
-![routing divergence](img/probe_divergence.png)
+![routing divergence](img/qwen_probe_divergence.png)
 
 All 40 layers in bf16, one layer in VRAM at a time: ~9 s per layer, 32-60k tokens/s, peak VRAM 3.98 GB.
 KL(domain || general) of the mean router distribution is small in layers 0-3 (0.02-0.04), high in 4-31

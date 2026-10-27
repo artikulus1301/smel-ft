@@ -13,3 +13,5 @@ It relies on, but does not include, the following third-party software and model
   gguf-py for reading GGUF files.
 - Qwen3.6-35B-A3B by the Qwen team (Apache-2.0): the base model; weights and tokenizer are downloaded
   by the user from the Hugging Face Hub and are not redistributed here.
+- Gemma 4 26B A4B by Google (Apache-2.0): the second supported base model; weights and tokenizer are
+  downloaded by the user from the Hugging Face Hub and are not redistributed here.

@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "smel-ft"
-version = "0.1.0"
+version = "0.2.0"
 description = "SMEL FT: Sparse MoE LoRA fine-tuning - LoRA on router-selected experts of a large MoE with a cached frozen bottom, on one consumer GPU"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
-keywords = ["moe", "lora", "fine-tuning", "qwen", "mixture-of-experts", "low-vram", "gguf"]
+keywords = ["moe", "lora", "fine-tuning", "qwen", "gemma", "mixture-of-experts", "low-vram", "gguf"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -20,8 +20,8 @@ classifiers = [
 # safetensors 0.8, numpy 2.5, gguf 0.19, Python 3.14 on Windows 11.
 dependencies = [
     "torch>=2.11",                  # torch._grouped_mm for the per-expert matmuls
-    "transformers>=5.17",           # qwen3_5_moe (reference implementation + tokenizer / chat template)
-    "flash-linear-attention>=0.5.2",
+    "transformers>=5.17",           # qwen3_5_moe / gemma4 (reference implementations + tokenizers / chat templates)
+    "flash-linear-attention>=0.5.2",  # Gated DeltaNet (Qwen)
     "fla-core>=0.5.2",
     "triton>=3.4; sys_platform != 'win32'",
     "triton-windows>=3.4; sys_platform == 'win32'",

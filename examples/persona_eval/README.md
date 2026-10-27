@@ -1,6 +1,6 @@
-# Persona evaluation (reference experiment)
+# Persona evaluation (reference experiments)
 
-Scripts used for the ablation in [docs/results.md](../../docs/results.md). They are tailored to a Russian-speaking
+Scripts used in both reference experiments ([Qwen](../../docs/results_qwen.md), [Gemma 4](../../docs/results_gemma4.md)). They are tailored to a Russian-speaking
 persona: the general prompts in `gen_compare.py`, and the persona text and regexes in `judge.py`, are examples to
 adapt to your own domain.
 
@@ -12,7 +12,8 @@ adapt to your own domain.
 | `judge.py` | automatic metrics (persona breaks, stage directions, length) and a blind pairwise judge: the base model compares two anonymous answers to the dataset reference, in both orders |
 
 `llama-server` is found through env `SMEL_LLAMA_SERVER`, `llamacpp.dir` in the config, or `PATH`. The default flags
-offload the experts of 32 layers to the CPU, which suits an 8 GB GPU; add or override flags with
+offload the experts of 32 layers to the CPU and use Qwen's MTP head, which suits an 8 GB GPU; replace them with
+`SMEL_LLAMA_SERVER_FLAGS` (e.g. Gemma 4: `-ngl 99 --n-cpu-moe 20 -c 8192 -fa on --no-mmproj --jinja`) or append with
 `SMEL_LLAMA_SERVER_ARGS`.
 
 ```bash
