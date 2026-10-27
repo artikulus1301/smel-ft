@@ -1,4 +1,4 @@
-"""Layer-wise access to MoE safetensors checkpoints through mmap (safe_open) and model dimensions.
+"""Layer-wise access to MoE safetensors checkpoints (plain reads of single tensors) and model dimensions.
 
 Supported architectures (`Dims.arch`):
   * qwen3_5_moe - Qwen3.5/3.6-MoE: Gated DeltaNet + gated full attention, 256 experts + shared expert.
@@ -11,10 +11,10 @@ its checkpoint name. `Checkpoint.full_name` maps back for writing merged weights
 """
 import json
 import os
+import struct
 from dataclasses import dataclass, field
 
 import torch
-from safetensors import safe_open
 
 ARCHS = ("qwen3_5_moe", "gemma4")
 
@@ -131,8 +131,63 @@ SHARED_MLP = {
 }
 
 
+_ST_DTYPES = {"BF16": torch.bfloat16, "F16": torch.float16, "F32": torch.float32, "F64": torch.float64,
+              "I64": torch.int64, "I32": torch.int32, "I16": torch.int16, "I8": torch.int8, "U8": torch.uint8,
+              "BOOL": torch.bool}
+
+
+class _Shard:
+    """One safetensors file read with plain seek/read: only the bytes of the requested tensor (or rows) are read.
+
+    safetensors.safe_open maps the whole file; on Windows a mapping counts against the commit limit
+    (RAM + pagefile), so a single 50 GB shard (Gemma 4 26B) crashes the process with an access violation."""
+
+    def __init__(self, path):
+        self.path = path
+        with open(path, "rb") as f:
+            n = struct.unpack("<Q", f.read(8))[0]
+            self.hdr = json.loads(f.read(n))
+        self.hdr.pop("__metadata__", None)
+        self.base = 8 + n
+
+    def keys(self):
+        return list(self.hdr)
+
+    def shape(self, name):
+        return list(self.hdr[name]["shape"])
+
+    def _read(self, off, nbytes):
+        buf = bytearray(nbytes)
+        with open(self.path, "rb", buffering=0) as f:
+            f.seek(self.base + off)
+            view, got = memoryview(buf), 0
+            while got < nbytes:
+                k = f.readinto(view[got:])
+                if not k:
+                    raise IOError(f"short read in {self.path}")
+                got += k
+        return buf
+
+    def get(self, name):
+        m = self.hdr[name]
+        a, b = m["data_offsets"]
+        dt = _ST_DTYPES[m["dtype"]]
+        if b == a:
+            return torch.empty(m["shape"], dtype=dt)
+        return torch.frombuffer(self._read(a, b - a), dtype=dt).reshape(m["shape"])
+
+    def get_rows(self, name, rows):
+        """Rows along dim 0 (e.g. a few experts of a fused 3D tensor) without reading the rest."""
+        m = self.hdr[name]
+        a, b = m["data_offsets"]
+        dt = _ST_DTYPES[m["dtype"]]
+        per = (b - a) // m["shape"][0]
+        out = [torch.frombuffer(self._read(a + int(r) * per, per), dtype=dt).reshape(m["shape"][1:]) for r in rows]
+        return torch.stack(out)
+
+
 class Checkpoint:
-    """Read-only view of a (possibly sharded) safetensors checkpoint. Tensors are read lazily from mmap."""
+    """Read-only view of a (possibly sharded) safetensors checkpoint. Tensors are read lazily, one at a time."""
 
     def __init__(self, model_dir: str):
         self.dir = model_dir
@@ -142,8 +197,7 @@ class Checkpoint:
                 self.weight_map = json.load(f)["weight_map"]
         else:
             fname = "model.safetensors"
-            with safe_open(os.path.join(model_dir, fname), "pt") as h:
-                self.weight_map = {k: fname for k in h.keys()}
+            self.weight_map = {k: fname for k in _Shard(os.path.join(model_dir, fname)).keys()}
         with open(os.path.join(model_dir, "config.json")) as f:
             self.config = json.load(f)
         self.dims = Dims.from_config(self.config)
@@ -157,14 +211,9 @@ class Checkpoint:
         self._handles = {}
 
     def _h(self, fname):
-        # keep only the two most recent shards mapped: on Windows every open mapping counts against the commit
-        # limit (RAM + pagefile), and 26 mapped shards (72 GB) exceed it -> os error 1455
-        h = self._handles.pop(fname, None)
+        h = self._handles.get(fname)
         if h is None:
-            h = safe_open(os.path.join(self.dir, fname), "pt")
-        self._handles[fname] = h
-        while len(self._handles) > 2:
-            self._handles.pop(next(iter(self._handles)))
+            h = self._handles[fname] = _Shard(os.path.join(self.dir, fname))   # header only: cheap to keep
         return h
 
     def full_name(self, l: int, short: str) -> str:
@@ -178,15 +227,14 @@ class Checkpoint:
         return name in self.weight_map
 
     def get(self, name: str) -> torch.Tensor:
-        return self._h(self.weight_map[name]).get_tensor(name)
+        return self._h(self.weight_map[name]).get(name)
 
     def shape(self, name: str):
-        return list(self._h(self.weight_map[name]).get_slice(name).get_shape())
+        return self._h(self.weight_map[name]).shape(name)
 
     def get_rows(self, name: str, rows) -> torch.Tensor:
         """Read only the given indices along dim 0 (e.g. a few experts of a fused 3D tensor)."""
-        sl = self._h(self.weight_map[name]).get_slice(name)
-        return torch.stack([sl[int(r): int(r) + 1][0] for r in rows])
+        return self._h(self.weight_map[name]).get_rows(name, rows)
 
     def layer_names(self, l: int):
         p = f"{self.prefix}layers.{l}."
