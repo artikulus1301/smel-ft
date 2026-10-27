@@ -46,8 +46,18 @@ The rest of the implementation:
 - **Resumable stages.** Long stages can be continued with `--resume`, and every stage appends a summary to
   `logs/progress.md`.
 
-**Supported model:** the `qwen3_5_moe` architecture of transformers (Qwen3.5/3.6 MoE). The tested model is
-`Qwen/Qwen3.6-35B-A3B`. Sizes are read from `config.json`, so other models of the family may work but are untested.
+**Supported models** (transformers architectures; sizes are read from `config.json`):
+
+| architecture | tested model | trained next to the selected experts | config |
+|---|---|---|---|
+| `qwen3_5_moe` (Qwen3.5/3.6 MoE) | `Qwen/Qwen3.6-35B-A3B` (reference run below) | shared expert | `configs/default.yaml` |
+| `gemma4` with a MoE block | `google/gemma-4-26B-A4B-it` | dense MLP (runs in parallel with the experts) | `configs/gemma4.yaml` |
+
+Gemma 4 specifics handled: sliding-window (1024) and global attention (K = V, partial proportional RoPE,
+head_dim 512 via memory-efficient SDPA), the router's own norm and per-expert scale, GELU-tanh experts, tied
+embeddings, final logit softcapping, and its chat template (an empty thought channel is added to answers exactly as
+llama-server does with thinking off). The Gemma 4 path is checked against transformers by `tests/test_gemma4.py`;
+a full run on the real model is in progress.
 
 ## Requirements
 
@@ -130,10 +140,8 @@ These are honest small-scale numbers from one domain; see [docs/results.md](docs
 
 ## Limitations
 
-- One architecture (`qwen3_5_moe`). Other MoE families need their own layer code in `smel/layer_runner.py`.
-- The router stays frozen, and LoRA has no dropout.
-- With a block larger than the OS file cache, each step re-reads the packed weights from disk. Fast NVMe matters.
-- GGUF export patches an existing quant; it does not create one from scratch.
+- Two architectures (`qwen3_5_moe`, `gemma4` with MoE). Other MoE families need their own layer code in
+  `smel/layer_runner.py` and names in `smel/model_io.py`.
 
 ## Project layout
 
