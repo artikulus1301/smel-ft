@@ -85,8 +85,10 @@ class GGMLProc:
         return np.load(op).tobytes()
 
     def close(self):
+        import shutil
         self.p.stdin.close()
         self.p.wait(30)
+        shutil.rmtree(self.tmp, ignore_errors=True)  # the .npy buffers of the last tensor can be large
 
 
 def _worker():
