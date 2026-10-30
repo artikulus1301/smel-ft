@@ -10,7 +10,9 @@ It relies on, but does not include, the following third-party software and model
   no transformers code is copied into this repository.
 - flash-linear-attention / fla-core (MIT): Gated DeltaNet kernels.
 - llama.cpp / ggml (MIT): GGUF quantization through the user's own build (ggml_quantize_chunk),
-  gguf-py for reading GGUF files.
+  gguf-py for reading and writing GGUF files.
+  inference/llama_cpp_patches/mixed-experts-b11827.patch is a modification of llama.cpp (build b11827,
+  commit 970b51ce7, Copyright (c) 2023-2026 The ggml authors) and is distributed under llama.cpp's MIT license.
 - Qwen3.6-35B-A3B by the Qwen team (Apache-2.0): the base model; weights and tokenizer are downloaded
   by the user from the Hugging Face Hub and are not redistributed here.
 - Gemma 4 26B A4B by Google (Apache-2.0): the second supported base model; weights and tokenizer are

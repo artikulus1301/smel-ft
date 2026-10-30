@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "smel-ft"
-version = "0.2.0"
+version = "0.3.0"
 description = "SMEL FT: Sparse MoE LoRA fine-tuning - LoRA on router-selected experts of a large MoE with a cached frozen bottom, on one consumer GPU"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
-keywords = ["moe", "lora", "fine-tuning", "qwen", "gemma", "mixture-of-experts", "low-vram", "gguf"]
+keywords = ["moe", "lora", "fine-tuning", "qwen", "gemma", "mixture-of-experts", "low-vram", "gguf", "quantization"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -37,6 +37,7 @@ dependencies = [
 [project.optional-dependencies]
 gguf = ["gguf>=0.17"]                    # GGUF export (also needs a llama.cpp build, see README)
 data = ["pyarrow>=15"]                   # scripts/make_general.py
+judge = ["openai>=1.30"]                 # examples/persona_eval/same_context_judge.py (OpenAI-compatible API)
 dev = ["pytest>=8"]
 
 [project.urls]

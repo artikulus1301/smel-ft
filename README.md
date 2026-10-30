@@ -160,6 +160,25 @@ during training was larger than in Qwen (up to 35% in three layers).
 
 These are honest small-scale numbers from one domain; see the two result documents for the caveats.
 
+## Running the fine-tuned model in less RAM
+
+The same router profiling applies after training. Most expert selections of an application go to a small part of the
+experts, so [inference/](inference/README.md) keeps the most used experts of every layer at the original quantization
+and re-quantizes the rest to fewer bits, with a small llama.cpp patch to run the result. The router is unchanged: a
+rarely used expert is still selected, just computed from a coarser copy. On the fine-tuned Qwen in a desktop companion
+app ([docs/results_mixed_experts.md](docs/results_mixed_experts.md)):
+
+| | GGUF | RAM of llama-server | generation | blind judge vs original |
+|---|---|---|---|---|
+| original Q3_K_XL | 16.0 GiB | 15.3 GB | 27.9 tok/s | - |
+| hot 128/256 experts per layer, cold gate/up IQ2_XXS, cold down IQ3_XXS | 14.0 GiB | ~13.3 GB* | within noise* | 31 : 34, p = 0.80 |
+
+\* measured on the variant with cold `down` in IQ2_XXS too (12.75 GB, 26.7 vs 27.9 tok/s over 5 rounds); this one is
+0.6 GiB larger.
+
+KL alone was not enough to pick the variant: with the cold `down` projection in IQ2_XXS (KL 0.030) the model started
+to misreport the user's tasks in the app's own check; with IQ3_XXS it did not.
+
 ## Limitations
 
 - Two architectures (`qwen3_5_moe`, `gemma4` with MoE). Other MoE families need their own layer code in
@@ -169,6 +188,8 @@ These are honest small-scale numbers from one domain; see the two result documen
 - GGUF export patches an existing quant; it does not create one from scratch.
 - `scripts/merge.py` loads every shard it rewrites into RAM, so merging into safetensors does not work for shards
   larger than RAM (Gemma 4's 50 GB shard). GGUF export does not need it.
+- Mixed-precision experts: the llama.cpp patch covers `qwen35moe` only and is made against one llama.cpp build
+  (b11827); the hot set is as good as the text it was ranked on.
 
 ## Project layout
 
@@ -176,15 +197,17 @@ These are honest small-scale numbers from one domain; see the two result documen
 smel/       library: model_io (checkpoint access, model dimensions), moe, quant (int4 + Triton dequant), lora,
             layer_runner (Qwen and Gemma 4 layers, layer-major runner), stream (prefetch), loss (chunked CE),
             data (chat templates + masks + packing), bottom (layer-by-layer pass of the frozen layers),
-            pack (packing + exact merge), gguf_patch, pipeline (config, stores), tiny (test models)
-scripts/    pipeline stages, scripts/bench/ benchmarks
+            pack (packing + exact merge), gguf_patch, pipeline (config, stores), tiny (test models),
+            mixed_experts (hot/cold expert GGUF)
+scripts/    pipeline stages, expert_usage + mixed_experts_gguf (inference), scripts/bench/ benchmarks
 configs/    default.yaml (Qwen), gemma4.yaml
-tests/      equivalence tests against transformers on tiny random models of both classes
-examples/   persona_eval: generation, automatic metrics and a blind pairwise judge through llama-server
-docs/       results of the two reference experiments
+tests/      equivalence tests against transformers on tiny random models of both classes, mixed-experts GGUF layout
+examples/   persona_eval: generation, automatic metrics, blind pairwise judges (reference answers; identical contexts)
+inference/  mixed-precision experts: llama.cpp patch and how-to
+docs/       results of the reference experiments
 ```
 
 ## License
 
-[Apache-2.0](LICENSE). The base models, their weights and tokenizers are not included and keep their own licenses.
-See [NOTICE](NOTICE).
+[Apache-2.0](LICENSE). The llama.cpp patch in `inference/llama_cpp_patches/` modifies llama.cpp and is under its MIT
+license. The base models, their weights and tokenizers are not included and keep their own licenses. See [NOTICE](NOTICE).
