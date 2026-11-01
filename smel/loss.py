@@ -48,7 +48,52 @@ class LMHead:
 
 
 def _ce_chunk(h, head: LMHead, tgt, need_grad):
-    """Loss sum and (optionally) d loss_sum / d h for one token chunk; two passes over vocab chunks."""
+    """Loss sum and (optionally) d loss_sum / d h for one token chunk, in ONE pass over the vocabulary.
+
+    Idea (Soup Kernel Challenge, fused_ce.py: the gradient is taken in the forward pass, written for SMEL FT): the
+    gradient sum_v softmax_v * W_v is accumulated online with the same running maximum as the log-sum-exp: when the
+    maximum moves from m to m', the accumulator and the running sum are both multiplied by exp(m - m'). The target
+    row W[tgt] (and, with softcapping, the derivative of the cap there) is taken from the chunk that holds the
+    target. The two-pass version (_ce_chunk_two_pass) reads the head weight twice; this one reads it once."""
+    n, H = h.shape
+    m = torch.full((n,), -float("inf"), device=h.device)
+    s = torch.zeros(n, device=h.device)
+    tgt_logit = torch.zeros(n, device=h.device)
+    acc = torch.zeros(n, H, device=h.device) if need_grad else None
+    tgt_row = torch.zeros(n, H, device=h.device) if need_grad else None
+    tgt_d = torch.ones(n, device=h.device) if need_grad else None   # d(cap)/dz at the target (1 without cap)
+    for v0, v1 in head.chunks():
+        W = head.rows(v0, v1, h.dtype)
+        lg = head.cap((h @ W.t()).float())
+        cm = lg.amax(-1)
+        nm = torch.maximum(m, cm)
+        r = (m - nm).exp()                       # rescale of the running sums to the new maximum
+        p = (lg - nm[:, None]).exp()
+        s = s * r + p.sum(-1)
+        inside = (tgt >= v0) & (tgt < v1)
+        if inside.any():
+            idx = inside.nonzero().squeeze(1)
+            col = tgt[idx] - v0
+            tgt_logit[idx] = lg[idx, col]
+            if need_grad:
+                tgt_row[idx] = W[col].float()
+                if head.softcap:
+                    tgt_d[idx] = 1 - (lg[idx, col] / head.softcap) ** 2
+        if need_grad:
+            if head.softcap:
+                p = p * (1 - (lg / head.softcap) ** 2)   # d cap(z) / dz, applied to every softmax term
+            acc = acc * r[:, None] + (p.to(h.dtype) @ W).float()
+        m = nm
+    lse = m + s.log()
+    loss = (lse - tgt_logit).sum()
+    if not need_grad:
+        return loss, None
+    gh = acc / s[:, None] - tgt_d[:, None] * tgt_row   # sum_v (softmax_v - onehot_v) * dcap_v * W_v
+    return loss, gh
+
+
+def _ce_chunk_two_pass(h, head: LMHead, tgt, need_grad):
+    """Loss sum and (optionally) d loss_sum / d h for one token chunk; two passes over vocab chunks (reference)."""
     n = h.shape[0]
     m = torch.full((n,), -float("inf"), device=h.device)
     s = torch.zeros(n, device=h.device)

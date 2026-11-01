@@ -6,7 +6,7 @@ Frozen experts run inside a custom autograd Function that keeps only its input f
 import torch
 import torch.nn.functional as F
 
-from .lora import lora_linear
+from .lora import lora_gate_up, lora_linear
 from .quant import dequant_int4, quantize_int4
 
 try:
@@ -180,19 +180,24 @@ def route_gemma4(h, W, top_k, eps):
     return probs, topv * W["router.per_expert_scale"][topi], topi
 
 
-def mlp_lora(x, w_gate, w_up, w_down, lora, act_name="silu"):
-    """Gated MLP down(act(gate(x)) * up(x)) with optional LoRA on all three projections."""
+def mlp_lora(x, w_gate, w_up, w_down, lora, act_name="silu", w_gate_up=None):
+    """Gated MLP down(act(gate(x)) * up(x)) with optional LoRA on all three projections. With w_gate_up (the stacked
+    [2I, H] weight of LayerWeights) and a 2-D x, gate and up share their GEMMs (lora.lora_gate_up)."""
     A = (lambda n: getattr(lora, "A_" + n)) if lora is not None else (lambda n: None)
     B = (lambda n: getattr(lora, "B_" + n)) if lora is not None else (lambda n: None)
     s = lora.scale if lora is not None else 0.0
-    g = lora_linear(x, w_gate, A("gate"), B("gate"), s)
-    u = lora_linear(x, w_up, A("up"), B("up"), s)
+    if w_gate_up is not None and x.dim() == 2:
+        g, u = lora_gate_up(x, w_gate_up, A("gate"), B("gate"), A("up"), B("up"), s)
+    else:
+        g = lora_linear(x, w_gate, A("gate"), B("gate"), s)
+        u = lora_linear(x, w_up, A("up"), B("up"), s)
     return lora_linear(act(g, act_name) * u, w_down, A("down"), B("down"), s)
 
 
 def shared_mlp(x, W, lora):
     pre = "mlp.shared_expert."
-    y = mlp_lora(x, W[pre + "gate_proj.weight"], W[pre + "up_proj.weight"], W[pre + "down_proj.weight"], lora)
+    y = mlp_lora(x, W[pre + "gate_proj.weight"], W[pre + "up_proj.weight"], W[pre + "down_proj.weight"], lora,
+                 w_gate_up=W.get(pre + "gate_up_proj.weight"))
     return y * torch.sigmoid(F.linear(x, W["mlp.shared_expert_gate.weight"]))
 
 
@@ -202,8 +207,7 @@ def _selected_expert(x, gu, dn, lora, j, act_name="silu"):
         g, u = (x @ gu.t()).chunk(2, dim=-1)
         return (act(g, act_name) * u) @ dn.t()
     s = lora.scale
-    g = lora_linear(x, gu[:I], lora.A_gate[j], lora.B_gate[j], s)
-    u = lora_linear(x, gu[I:], lora.A_up[j], lora.B_up[j], s)
+    g, u = lora_gate_up(x, gu, lora.A_gate[j], lora.B_gate[j], lora.A_up[j], lora.B_up[j], s)
     return lora_linear(act(g, act_name) * u, dn, lora.A_down[j], lora.B_down[j], s)
 
 

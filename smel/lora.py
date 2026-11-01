@@ -59,11 +59,28 @@ class MLPLoRA(nn.Module):
 
 
 def lora_linear(x, w, A, B, scale):
-    """x @ w.T + scale * (x @ A.T) @ B.T, with LoRA factors cast to the activation dtype."""
+    """x @ w.T + scale * (x @ A.T) @ B.T, with LoRA factors cast to the activation dtype. The scaled add is the
+    epilogue of the second LoRA GEMM (addmm: no separate pass over y, and the LoRA term is not rounded before it)."""
     y = x @ w.t()
-    if A is not None:
-        y = y + scale * ((x @ A.to(x.dtype).t()) @ B.to(x.dtype).t())
-    return y
+    if A is None:
+        return y
+    if x.dim() == 2:
+        return torch.addmm(y, x @ A.to(x.dtype).t(), B.to(x.dtype).t(), alpha=scale)
+    return y + scale * ((x @ A.to(x.dtype).t()) @ B.to(x.dtype).t())
+
+
+def lora_gate_up(x, w_gate_up, A_gate, B_gate, A_up, B_up, scale):
+    """(gate, up) of a gated MLP whose two projections read the same x: one base GEMM over the stacked [2I, H]
+    weight and one GEMM over the stacked LoRA A [2r, H] instead of two each. x: [T, H]; A_*: [r, H]; B_*: [I, r]."""
+    I = w_gate_up.shape[0] // 2
+    base = x @ w_gate_up.t()
+    if A_gate is None:
+        return base[:, :I], base[:, I:]
+    r = A_gate.shape[0]
+    xa = x @ torch.cat((A_gate, A_up)).to(x.dtype).t()
+    g = torch.addmm(base[:, :I], xa[:, :r], B_gate.to(x.dtype).t(), alpha=scale)
+    u = torch.addmm(base[:, I:], xa[:, r:], B_up.to(x.dtype).t(), alpha=scale)
+    return g, u
 
 
 class LayerLoRA(nn.Module):

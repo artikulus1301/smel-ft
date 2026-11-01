@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
+from . import norm as _norm
 from .model_io import Dims
 from .moe import LayerExperts, mlp_lora, moe_forward, route_gemma4, routed_experts
 
@@ -107,7 +108,11 @@ def make_ctx(lens, d: Dims, device, dtype) -> SeqCtx:
 
 # ----------------------------------------------------------------------------------------------- primitives
 def rmsnorm(x, w, eps, plus_one=True):
-    """RMSNorm in fp32: x * (1 + w) (Qwen3.5) or x * w (Gemma 4, plus_one=False); w=None: no scale."""
+    """RMSNorm in fp32: x * (1 + w) (Qwen3.5) or x * w (Gemma 4, plus_one=False); w=None: no scale.
+    bf16 activations on CUDA with a frozen weight (the training path) take the Triton kernels of norm.py; fp32
+    (the exact gradient checks of test_layer_major) and CPU stay on the torch code below."""
+    if _norm.supported(x, w):
+        return _norm.rmsnorm(x, w, eps, plus_one)
     xf = x.float()
     if plus_one:
         xf = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + eps)
@@ -116,7 +121,17 @@ def rmsnorm(x, w, eps, plus_one=True):
     return (xf if w is None else xf * w.float()).type_as(x)
 
 
+def add_rmsnorm(h, x, w, eps, plus_one=True):
+    """(h + x, rmsnorm(h + x)): the residual add and the norm that follows it, one kernel each way on the kernel path."""
+    if _norm.supported(h, w) and x.dtype == h.dtype and x.shape == h.shape and w is not None:
+        return _norm.add_rmsnorm(h, x, w, eps, plus_one)
+    s = h + x
+    return s, rmsnorm(s, w, eps, plus_one)
+
+
 def gated_rmsnorm(x, z, w, eps):
+    if _norm.supported(x, w) and w is not None and z.dtype == x.dtype and z.shape == x.shape:
+        return _norm.gated_rmsnorm(x, z, w, eps)
     dt = x.dtype
     xf = x.float()
     xf = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + eps)
@@ -229,12 +244,13 @@ def layer_forward_gemma4(h, LW, d: Dims, ctx: SeqCtx, lora_layer=None, stats=Non
     W = LW.W
     x = rmsnorm(h, W["input_layernorm.weight"], d.eps, False)
     x = attention_gemma4(x, W, d, ctx, LW.ltype == "full_attention")
-    h = h + rmsnorm(x, W["post_attention_layernorm.weight"], d.eps, False)
+    h, xm = add_rmsnorm(h, rmsnorm(x, W["post_attention_layernorm.weight"], d.eps, False),
+                        W["pre_feedforward_layernorm.weight"], d.eps, False)
     lora_sh = lora_layer.shared if lora_layer is not None else None
     lora_ex = lora_layer.experts if lora_layer is not None else None
     # dense MLP (gets the "shared" LoRA) and the experts read the same residual through different norms
-    m = mlp_lora(rmsnorm(h, W["pre_feedforward_layernorm.weight"], d.eps, False), W["mlp.gate_proj.weight"],
-                 W["mlp.up_proj.weight"], W["mlp.down_proj.weight"], lora_sh, d.act)
+    m = mlp_lora(xm, W["mlp.gate_proj.weight"],
+                 W["mlp.up_proj.weight"], W["mlp.down_proj.weight"], lora_sh, d.act, W.get("mlp.gate_up_proj.weight"))
     m = rmsnorm(m, W["post_feedforward_layernorm_1.weight"], d.eps, False)
     probs, topv, topi = route_gemma4(h, W, d.top_k, d.eps)
     if stats is not None:
@@ -250,6 +266,15 @@ class LayerWeights:
     """Device tensors of one decoder layer: dense part (dict, names relative to the layer) + routed experts."""
 
     def __init__(self, idx: int, ltype: str, W: dict, experts: LayerExperts):
+        W = dict(W)
+        # gate and up of the dense / shared MLP read the same input: stack them once per layer load (the old names
+        # stay as views), so that moe.mlp_lora runs one base GEMM over [2I, H]
+        for pre in ("mlp.shared_expert.", "mlp."):
+            g, u = W.get(pre + "gate_proj.weight"), W.get(pre + "up_proj.weight")
+            if g is not None and u is not None and g.shape == u.shape:
+                gu = torch.cat((g, u))
+                W[pre + "gate_up_proj.weight"], W[pre + "gate_proj.weight"], W[pre + "up_proj.weight"] = \
+                    gu, gu[:g.shape[0]], gu[g.shape[0]:]
         self.idx, self.ltype, self.W, self.experts = idx, ltype, W, experts
 
 
@@ -262,8 +287,7 @@ def layer_forward(h, LW: LayerWeights, d: Dims, ctx: SeqCtx, lora_layer=None, st
         x = deltanet(x, W, d, ctx)
     else:
         x = attention(x, W, d, ctx)
-    h = h + x
-    x = rmsnorm(h, W["post_attention_layernorm.weight"], d.eps)
+    h, x = add_rmsnorm(h, x, W["post_attention_layernorm.weight"], d.eps)
     return h + moe_forward(x, W, LW.experts, d.top_k, lora_layer, stats)
 
 

@@ -22,6 +22,9 @@ p.add_argument("--seq-len", type=int, default=132)
 p.add_argument("--k-sel", type=int, default=12)
 p.add_argument("--group", type=int, default=32)
 p.add_argument("--frozen", default="int4")
+p.add_argument("--reps", type=int, default=10, help="timed repetitions (mean)")
+p.add_argument("--trace", default=None, help="also write a torch.profiler chrome trace of one fwd + recompute+bwd "
+               "per layer type and length (prefix of the .json files); analyse it with scripts/bench/trace_gaps.py")
 args = p.parse_args()
 
 if args.config is None:
@@ -81,28 +84,37 @@ for ltype in ("linear_attention", "full_attention"):
         ctx = make_ctx(lens, d, dev, dt)
         x = torch.randn(sum(lens), H, device=dev, dtype=dt)
         g = torch.randn_like(x)
-        for _ in range(2):  # warmup (Triton compile)
+        for _ in range(2):  # warmup (Triton compile of the forward and the backward kernels)
             with torch.no_grad():
                 layer_forward(x, LW, d, ctx, lora.get(0))
+            layer_forward(x.detach().requires_grad_(True), LW, d, ctx, lora.get(0)).backward(g)
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
         base = torch.cuda.memory_allocated()
         t0 = time.perf_counter()
-        for _ in range(3):
+        for _ in range(args.reps):
             with torch.no_grad():
                 layer_forward(x, LW, d, ctx, lora.get(0))
         torch.cuda.synchronize()
-        tf = (time.perf_counter() - t0) / 3
+        tf = (time.perf_counter() - t0) / args.reps
         t0 = time.perf_counter()
-        for _ in range(3):
+        for _ in range(args.reps):
             xx = x.detach().requires_grad_(True)
             layer_forward(xx, LW, d, ctx, lora.get(0)).backward(g)
         torch.cuda.synchronize()
-        tb = (time.perf_counter() - t0) / 3
+        tb = (time.perf_counter() - t0) / args.reps
         peak = (torch.cuda.max_memory_allocated() - base) / 2**30
         print(f"{ltype:17s} T={sum(lens):5d} ({n}x{args.seq_len}): fwd {tf*1e3:7.1f} ms, recompute+bwd {tb*1e3:7.1f} ms,"
               f" activation peak {peak:.2f} GB")
         res[f"{ltype}_T{sum(lens)}"] = {"fwd_ms": tf * 1e3, "bwd_ms": tb * 1e3, "act_peak_GB": peak}
+        if args.trace:
+            from torch.profiler import ProfilerActivity, profile
+            with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], with_stack=True) as prof:
+                with torch.no_grad():
+                    layer_forward(x, LW, d, ctx, lora.get(0))
+                layer_forward(x.detach().requires_grad_(True), LW, d, ctx, lora.get(0)).backward(g)
+                torch.cuda.synchronize()
+            prof.export_chrome_trace(f"{args.trace}_{ltype}_T{sum(lens)}.json")
 
 # H2D of a packed layer from pinned memory
 cpu = {k: v.cpu().pin_memory() for k, v in bank.tensors().items()}

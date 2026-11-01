@@ -17,3 +17,9 @@ It relies on, but does not include, the following third-party software and model
   by the user from the Hugging Face Hub and are not redistributed here.
 - Gemma 4 26B A4B by Google (Apache-2.0): the second supported base model; weights and tokenizer are
   downloaded by the user from the Hugging Face Hub and are not redistributed here.
+
+Ideas adapted from the authors' own Soup Kernel Challenge solution (Apache-2.0, not copied verbatim; rewritten
+for SMEL FT's frozen norms, chunked head and own LoRA): the fused RMSNorm and residual-add + RMSNorm kernels
+(smel/norm.py), the single-pass chunked cross-entropy with the gradient taken in the same pass (smel/loss.py,
+_ce_chunk), the LoRA add as the epilogue of its GEMM and the shared gate/up input (smel/lora.py), the recompile
+check (tests/test_recompile.py) and the GPU-idle analysis of a profiler trace (scripts/bench/trace_gaps.py).
