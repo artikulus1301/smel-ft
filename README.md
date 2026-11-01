@@ -49,10 +49,17 @@ The rest of the implementation:
   dense MLP in parallel with the experts. Sequence packing works through `cu_seqlens`, a boundary-aware causal conv
   and block-diagonal / windowed masks, all checked by tests.
 - **Loss.** Chunked cross-entropy over the 248-262k vocabulary without materializing logits, with Gemma's logit
-  softcapping. Only the assistant answers are supervised; the training text matches the generation prompt with
+  softcapping. One pass over the head weight: the gradient is accumulated online with the same running maximum as
+  the log-sum-exp (35% less time than two passes at the Qwen vocabulary). Only the assistant answers are supervised; the training text matches the generation prompt with
   thinking off byte for byte.
 - **Checkpoint access.** Tensors (or single expert rows) are read with plain file reads, never by mapping a whole
   shard: on Windows a 50 GB shard does not fit the commit limit.
+- **Fused kernels.** The norms of the frozen layers are Triton kernels, one launch each way: RMSNorm, the residual
+  add fused with the norm after it, and the gated output norm of Gated DeltaNet (backward gives dx only, the norm
+  weights are frozen; fp32 and CPU keep the torch code, which the exact gradient tests use). The LoRA add is the
+  epilogue of its GEMM (`addmm`), and gate / up of an MLP share one base GEMM and one LoRA-A GEMM. On one Qwen3.6
+  layer at full size (`scripts/bench/bench_layer.py`, 4092 tokens): forward −9…−10%, recompute + backward −8…−10%,
+  activation peak up to −13% (Gated DeltaNet layers).
 - **Weight streaming.** Double-buffered prefetch on a side CUDA stream, from pinned RAM or from disk.
 - **Resumable stages.** Long stages can be continued with `--resume`, and every stage appends a summary to
   `logs/progress.md`.
@@ -130,7 +137,10 @@ All settings live in the config and can be overridden per run, e.g. `--set train
 | ablations | `scripts/make_selection.py --kind random\|shared` | control expert selections |
 
 Tools: `scripts/gguf_repro_check.py` checks that the quantization path reproduces the bytes of the base GGUF on an
-unchanged layer. `scripts/gguf_quant_error.py` and `scripts/bench/` hold hardware and kernel benchmarks.
+unchanged layer. `scripts/gguf_quant_error.py` and `scripts/bench/` hold hardware and kernel benchmarks;
+`bench_layer.py --trace P` writes a torch.profiler trace of one layer step, and `scripts/bench/trace_gaps.py` shows
+where the GPU waits for the host in it. `tests/test_recompile.py` checks that no Triton kernel compiles again for a
+new micro-batch length.
 [examples/persona_eval/](examples/persona_eval/) is the generation + blind-judge evaluation used in both experiments
 (llama-server flags via `SMEL_LLAMA_SERVER_FLAGS`).
 
@@ -181,6 +191,10 @@ to misreport the user's tasks in the app's own check; with IQ3_XXS it did not.
 
 ## Limitations
 
+- The adapter learns the training answers closely: their length, formatting and defects included. If the data is
+  worse than what the base model already writes (short machine-translated answers, broken punctuation), the
+  fine-tuned model gets worse in conversation even while the domain perplexity drops. Check the data first, and
+  compare with the base model by a judge or a benchmark, not by perplexity alone.
 - Two architectures (`qwen3_5_moe`, `gemma4` with MoE). Other MoE families need their own layer code in
   `smel/layer_runner.py` and names in `smel/model_io.py`.
 - The router stays frozen, and LoRA has no dropout. The experts are chosen once, on the model before training.
@@ -195,7 +209,8 @@ to misreport the user's tasks in the app's own check; with IQ3_XXS it did not.
 
 ```
 smel/       library: model_io (checkpoint access, model dimensions), moe, quant (int4 + Triton dequant), lora,
-            layer_runner (Qwen and Gemma 4 layers, layer-major runner), stream (prefetch), loss (chunked CE),
+            layer_runner (Qwen and Gemma 4 layers, layer-major runner), norm (Triton norms), stream (prefetch),
+            loss (chunked CE),
             data (chat templates + masks + packing), bottom (layer-by-layer pass of the frozen layers),
             pack (packing + exact merge), gguf_patch, pipeline (config, stores), tiny (test models),
             mixed_experts (hot/cold expert GGUF)
