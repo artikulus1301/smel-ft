@@ -120,90 +120,48 @@ python scripts/export_gguf.py --adapter artifacts/adapter_L16 --base-gguf base.g
 
 All settings live in the config and can be overridden per run, e.g. `--set train.lr=2e-4 train.epochs=4`.
 
-## Stages and outputs
+### Web UI
 
-| stage | script | output |
-|---|---|---|
-| download | `scripts/download.py [--repo R]` | `paths.model_dir` |
-| general corpus | `scripts/make_general.py` | `paths.general_data` |
-| probe | `scripts/probe.py` | `artifacts/routing_stats.pt`, `reports/probe.md`, `reports/probe_divergence.png`, cached inputs of the candidate L |
-| select | `scripts/select_experts.py` | `paths.selection`, `reports/select.md` |
-| cache | `scripts/cache.py [--L N]` | `work/cache_L{L}/` |
-| pack | `scripts/pack.py [--no-write]` | `work/packed_L{L}/`, `reports/pack.md` |
-| train | `scripts/train.py [--max-steps N] [--resume] [--tag T] [--selection F]` | `artifacts/adapter_{T}/`, `logs/train_{T}.jsonl` |
-| eval | `scripts/eval.py --adapter A [--packed]` | `reports/eval.md`, `A/eval_ppl.json` |
-| merge | `scripts/merge.py --adapter A --out DIR [--verify]` | merged safetensors |
-| GGUF | `scripts/export_gguf.py --adapter A --base-gguf G [--imatrix I] [--reuse]` | patched GGUF |
-| ablations | `scripts/make_selection.py --kind random\|shared` | control expert selections |
+```bash
+python ui/server.py            # open http://127.0.0.1:7860
+```
 
-Tools: `scripts/gguf_repro_check.py` checks that the quantization path reproduces the bytes of the base GGUF on an
-unchanged layer. `scripts/gguf_quant_error.py` and `scripts/bench/` hold hardware and kernel benchmarks;
-`bench_layer.py --trace P` writes a torch.profiler trace of one layer step, and `scripts/bench/trace_gaps.py` shows
-where the GPU waits for the host in it. `tests/test_recompile.py` checks that no Triton kernel compiles again for a
-new micro-batch length.
-[examples/persona_eval/](examples/persona_eval/) is the generation + blind-judge evaluation used in both experiments
-(llama-server flags via `SMEL_LLAMA_SERVER_FLAGS`).
+A local page that runs the same pipeline without the command line: data upload and checks, choosing one of the two
+models, profiling, expert selection, cache and pack, training and the perplexity test. It runs on the standard library
+and listens on localhost only.
 
-## What the experiments showed
+![SMEL FT web UI: a project with its stages](docs/ui/ui_en.png)
 
-**The probe finds the same structure in both families.** Domain-specific routing sits in the middle layers
-(Qwen 10-28 of 40, Gemma 12-22 of 30), while the top layers route domain and general text to the same experts.
-The 70% coverage rule gives the same cut layer for both, L = 12-13.
+**How to use it**
 
-**Qwen: what the router-based choice adds.** Variants differ only in which routed experts get LoRA; the shared
-experts are trained in all of them (perplexity before: 17.88):
+1. **Create a project.** In the left column, enter a name, choose the model (Qwen3.6-35B-A3B or Gemma 4 26B-A4B) and
+   optionally the folder with its weights, then press *Create*. Each project keeps its own settings and outputs.
+2. **Model.** The page shows whether the weights are found. If not, *Download* fetches them from Hugging Face (with a
+   confirmation and a check of free disk space). The weights are only read, never changed.
+3. **Data.** Upload a chat `.jsonl` (one dialog per line: `{"messages": [...]}`) or type a path, then press *Check*.
+   The check reports broken lines, duplicates, answer lengths and two common defects: very short answers and missing
+   spaces after punctuation. Fix the errors before continuing; warnings are worth reading. *Token statistics* shows the
+   token counts. For the general text, upload a file or press *Build general corpus*.
+4. **Profiling** (about 6 minutes for Qwen). Records which experts the router picks for your data. Re-run with
+   *start over* only if the data changed.
+5. **Expert selection.** Shows the chosen cut layer L, the number of trainable experts and the estimated VRAM and time.
+   Change coverage, force L or the memory budgets and press *Select experts* again if needed.
+6. **Preparation.** *Build cache* and *Pack block* are needed once per cut layer.
+7. **Training.** Set the learning rate, epochs, LoRA rank and alpha. Start with a short test run (*max steps*), check
+   speed and memory, then run in full. *Resume* continues an interrupted run from its last checkpoint. The chart shows
+   training and validation loss; hover over it for exact values. Each run is saved under its own name.
+8. **Tests.** *Evaluate* measures perplexity before and after training on held-out domain dialogs and on the general
+   text. Domain perplexity should go down; a rise above 5% on the general text means the model forgets. Perplexity does
+   not show answer quality, so also compare answers with the base model. *Self-test* runs pytest to check the install.
+9. **Run all stages** starts the pipeline from the stage chosen in *from* and stops at the first failure.
 
-| variant | domain perplexity | judge vs base model |
-|---|---|---|
-| shared experts only | 9.03 | 19 : 20 |
-| + 168 random experts (L=20) | 8.88 | 23 : 15 |
-| + 168 router-selected experts (L=20) | 8.34 | **27 : 10** |
-| + 213 router-selected experts (L=16) | **7.97** | 24 : 19 |
+The bottom panel shows the running stage with its live log. *Stop* ends the current stage (the whole process tree).
+Only one stage runs at a time, so the GPU is never shared between two jobs. Everything is also available from the
+command line: the buttons run the scripts from the table below with the project's config,
+`configs/projects/<name>.yaml`. Outputs go to `work/<name>`, `artifacts/<name>`, `reports/<name>` and `logs/<name>`.
 
-The shared experts carry most of the effect. Router-selected experts add a consistent extra 8-12% on perplexity
-(random ones add 2%) and most of the persona voice. A lower cut layer helps, as the probe suggests.
-
-**Gemma 4: the method transfers, the persona is harder.** Persona breaks fell from 20% to 6% and stage directions
-from 54% to 2%, but the judge's preference over the base model (18 : 10) is not significant on 50 prompts. All
-remaining breaks are in dialogs without a system prompt, where Gemma falls back to its own identity; routing drift
-during training was larger than in Qwen (up to 35% in three layers).
-
-These are honest small-scale numbers from one domain; see the two result documents for the caveats.
-
-## Running the fine-tuned model in less RAM
-
-The same router profiling applies after training. Most expert selections of an application go to a small part of the
-experts, so [inference/](inference/README.md) keeps the most used experts of every layer at the original quantization
-and re-quantizes the rest to fewer bits, with a small llama.cpp patch to run the result. The router is unchanged: a
-rarely used expert is still selected, just computed from a coarser copy. On the fine-tuned Qwen in a desktop companion
-app ([docs/results_mixed_experts.md](docs/results_mixed_experts.md)):
-
-| | GGUF | RAM of llama-server | generation | blind judge vs original |
-|---|---|---|---|---|
-| original Q3_K_XL | 16.0 GiB | 15.3 GB | 27.9 tok/s | - |
-| hot 128/256 experts per layer, cold gate/up IQ2_XXS, cold down IQ3_XXS | 14.0 GiB | ~13.3 GB* | within noise* | 31 : 34, p = 0.80 |
-
-\* measured on the variant with cold `down` in IQ2_XXS too (12.75 GB, 26.7 vs 27.9 tok/s over 5 rounds); this one is
-0.6 GiB larger.
-
-KL alone was not enough to pick the variant: with the cold `down` projection in IQ2_XXS (KL 0.030) the model started
-to misreport the user's tasks in the app's own check; with IQ3_XXS it did not.
-
-## Limitations
-
-- The adapter learns the training answers closely: their length, formatting and defects included. If the data is
-  worse than what the base model already writes (short machine-translated answers, broken punctuation), the
-  fine-tuned model gets worse in conversation even while the domain perplexity drops. Check the data first, and
-  compare with the base model by a judge or a benchmark, not by perplexity alone.
-- Two architectures (`qwen3_5_moe`, `gemma4` with MoE). Other MoE families need their own layer code in
-  `smel/layer_runner.py` and names in `smel/model_io.py`.
-- The router stays frozen, and LoRA has no dropout. The experts are chosen once, on the model before training.
-- With a block larger than the OS file cache, each step re-reads the packed weights from disk. Fast NVMe matters.
-- GGUF export patches an existing quant; it does not create one from scratch.
-- `scripts/merge.py` loads every shard it rewrites into RAM, so merging into safetensors does not work for shards
-  larger than RAM (Gemma 4's 50 GB shard). GGUF export does not need it.
-- Mixed-precision experts: the llama.cpp patch covers `qwen35moe` only and is made against one llama.cpp build
-  (b11827); the hot set is as good as the text it was ranked on.
+The page can be switched between English and Russian (the button in the header). Use `--host 0.0.0.0` only on a trusted
+network: it makes the page and the stages reachable from other computers, and there is no password.
 
 ## Project layout
 
@@ -216,6 +174,7 @@ smel/       library: model_io (checkpoint access, model dimensions), moe, quant 
             mixed_experts (hot/cold expert GGUF)
 scripts/    pipeline stages, expert_usage + mixed_experts_gguf (inference), scripts/bench/ benchmarks
 configs/    default.yaml (Qwen), gemma4.yaml
+ui/         web UI: server.py (standard library) + index.html
 tests/      equivalence tests against transformers on tiny random models of both classes, mixed-experts GGUF layout
 examples/   persona_eval: generation, automatic metrics, blind pairwise judges (reference answers; identical contexts)
 inference/  mixed-precision experts: llama.cpp patch and how-to

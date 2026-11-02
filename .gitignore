@@ -24,3 +24,6 @@ configs/tiny_e2e*.yaml
 # Secrets / local
 .env
 *.local.yaml
+
+# Projects of the web UI (ui/server.py)
+configs/projects/

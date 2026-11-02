@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMEL FT</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f6f6f4; --surface: #fcfcfb; --surface-2: #f0efec; --border: #dedcd6;
+  --text: #0b0b0b; --text-2: #52514e; --muted: #7a7973;
+  --accent: #2a78d6; --accent-ink: #ffffff;
+  --series-1: #2a78d6; --series-2: #eb6834;
+  --good: #1f7a3a; --warn: #9a6200; --bad: #c03535;
+  --good-bg: #e5f3e8; --warn-bg: #fbf0d9; --bad-bg: #fbe5e3;
+  --log-bg: #1a1a19; --log-text: #e6e5e0;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121211; --surface: #1a1a19; --surface-2: #232321; --border: #34332f;
+    --text: #f0efec; --text-2: #c3c2b7; --muted: #8f8e86;
+    --accent: #3987e5; --accent-ink: #ffffff;
+    --series-1: #3987e5; --series-2: #d95926;
+    --good: #5fc27a; --warn: #e0a83a; --bad: #ee6f6f;
+    --good-bg: #183020; --warn-bg: #33280f; --bad-bg: #3a1a19;
+    --log-bg: #0c0c0b; --log-text: #e6e5e0;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121211; --surface: #1a1a19; --surface-2: #232321; --border: #34332f;
+  --text: #f0efec; --text-2: #c3c2b7; --muted: #8f8e86;
+  --accent: #3987e5; --accent-ink: #ffffff;
+  --series-1: #3987e5; --series-2: #d95926;
+  --good: #5fc27a; --warn: #e0a83a; --bad: #ee6f6f;
+  --good-bg: #183020; --warn-bg: #33280f; --bad-bg: #3a1a19;
+  --log-bg: #0c0c0b; --log-text: #e6e5e0;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; align-items: center; gap: 16px; padding: 10px 20px; background: var(--surface);
+  border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+header .sub { color: var(--muted); font-size: 12px; }
+.chips { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; align-items: center; }
+.chip { font-size: 12px; color: var(--text-2); background: var(--surface-2); border-radius: 99px; padding: 3px 10px;
+  font-variant-numeric: tabular-nums; }
+.layout { display: grid; grid-template-columns: 220px 1fr; gap: 20px; padding: 20px; max-width: 1280px;
+  margin: 0 auto 340px; }
+@media (max-width: 800px) { .layout { grid-template-columns: 1fr; padding: 16px; } }
+nav .proj { display: block; width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; border: 0;
+  background: none; color: var(--text); cursor: pointer; font: inherit; }
+nav .proj:hover { background: var(--surface-2); }
+nav .proj.on { background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); font-weight: 600; }
+nav .proj small { display: block; color: var(--muted); font-weight: 400; }
+nav h3, .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+  margin: 0 0 8px; font-weight: 600; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px;
+  margin-bottom: 14px; }
+.card h2 { display: flex; align-items: center; gap: 8px; text-transform: none; letter-spacing: 0; font-size: 15px;
+  color: var(--text); }
+.num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--surface-2); color: var(--text-2); font-size: 12px; font-weight: 600; }
+.num.ok { background: var(--good-bg); color: var(--good); }
+.hint { color: var(--text-2); margin: 0 0 12px; max-width: 75ch; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin: 8px 0; }
+label.f { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-2); }
+label.f.grow { flex: 1 1 320px; }
+label.cb { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--text-2); }
+input, select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 7px; padding: 6px 8px; min-width: 0; }
+input[type=number] { width: 110px; }
+input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button { font: inherit; border-radius: 7px; padding: 6px 14px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.link { border: 0; background: none; color: var(--accent); padding: 0; }
+.badge { font-size: 12px; padding: 2px 8px; border-radius: 99px; font-weight: 500; }
+.badge.ok { background: var(--good-bg); color: var(--good); }
+.badge.no { background: var(--surface-2); color: var(--muted); }
+.badge.warn { background: var(--warn-bg); color: var(--warn); }
+.badge.bad { background: var(--bad-bg); color: var(--bad); }
+.kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 10px 0; }
+.kv div { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; }
+.kv b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.kv span { font-size: 12px; color: var(--text-2); }
+.warns { margin: 8px 0; padding: 0; list-style: none; }
+.warns li { background: var(--warn-bg); color: var(--warn); border-radius: 7px; padding: 6px 10px; margin: 4px 0; }
+.warns li.bad { background: var(--bad-bg); color: var(--bad); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--text-2); font-weight: 600; }
+.scroll { overflow-x: auto; }
+details { margin-top: 10px; }
+summary { cursor: pointer; color: var(--accent); }
+.md { margin-top: 8px; max-height: 520px; overflow: auto; border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 14px; background: var(--surface); }
+.md img { max-width: 100%; background: #fff; border-radius: 6px; }
+.md h1 { font-size: 17px; } .md h2 { font-size: 15px; } .md h3 { font-size: 14px; }
+code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; background: var(--surface-2);
+  padding: 1px 4px; border-radius: 4px; }
+.sample { font-size: 13px; }
+.sample .m { padding: 6px 10px; border-radius: 8px; background: var(--surface-2); margin: 4px 0;
+  white-space: pre-wrap; word-break: break-word; }
+.sample .m i { color: var(--muted); font-style: normal; font-size: 12px; display: block; }
+.empty { color: var(--muted); padding: 40px 0; text-align: center; }
+.err { color: var(--bad); }
+/* console */
+#console { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--border);
+  z-index: 6; }
+#console .bar { display: flex; align-items: center; gap: 12px; padding: 8px 20px; flex-wrap: wrap; }
+#console pre { margin: 0; height: 260px; overflow: auto; background: var(--log-bg); color: var(--log-text);
+  font: 12px/1.4 ui-monospace, Consolas, monospace; padding: 10px 20px; white-space: pre-wrap; word-break: break-all; }
+#console.min pre { display: none; }
+.layout.min { margin-bottom: 70px; }
+/* chart */
+.chart { position: relative; margin-top: 10px; }
+.chart svg { display: block; width: 100%; height: 260px; overflow: visible; }
+.chart .grid line { stroke: var(--border); stroke-width: 1; }
+.chart text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-2); margin-top: 6px; }
+.legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.12); display: none;
+  white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tip b { font-weight: 650; color: var(--text); }
+.tip div { color: var(--text-2); }
+.tip i { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 6px; }
+.dialog { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SMEL FT</h1>
+  <span class="sub" data-i="tagline"></span>
+  <div class="chips" id="sys"></div>
+  <button id="lang" class="link" style="margin-left:8px"></button>
+</header>
+
+<div class="layout" id="layout">
+  <nav>
+    <h3 data-i="projects"></h3>
+    <div id="plist"></div>
+    <div class="card" style="margin-top:12px;padding:12px">
+      <h2 style="font-size:13px" data-i="new_project"></h2>
+      <label class="f"><span data-i="name"></span><input id="np_name" placeholder="my-run"></label>
+      <label class="f" style="margin-top:6px"><span data-i="model"></span><select id="np_model"></select></label>
+      <label class="f" style="margin-top:6px"><span data-i="model_dir_opt"></span><input id="np_dir" placeholder="data/Qwen3.6-35B-A3B"></label>
+      <button class="primary" style="margin-top:10px;width:100%" id="np_go" data-i="create"></button>
+      <div class="err" id="np_err"></div>
+    </div>
+  </nav>
+  <main id="main"><div class="empty" data-i="pick"></div></main>
+</div>
+
+<div id="console">
+  <div class="bar">
+    <strong data-i="console"></strong>
+    <span id="jstate" class="badge no"></span>
+    <span id="jinfo" class="chip"></span>
+    <button id="jstop" data-i="stop" disabled></button>
+    <label class="cb"><input type="checkbox" id="jfollow" checked><span data-i="follow"></span></label>
+    <button id="jtoggle" class="link" style="margin-left:auto" data-i="hide"></button>
+  </div>
+  <pre id="jlog"></pre>
+</div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------------------------------------- i18n
+const T = {
+  en: {
+    tagline: "LoRA on router-selected experts of a large MoE, on one consumer GPU",
+    projects: "Projects", new_project: "New project", name: "Name", model: "Model",
+    model_dir_opt: "Model folder (optional)", create: "Create", pick: "Create a project or pick one on the left.",
+    console: "Job", stop: "Stop", follow: "follow", hide: "hide", show: "show", idle: "idle",
+    running: "running", done: "done", failed: "failed", stopped: "stopped",
+    run_all: "Run all stages", from: "from", disk_free: "free on work disk", save: "Save",
+    s1: "Model", s1_hint: "Original bf16 weights (safetensors). They are only read, never changed.",
+    model_dir: "Model folder", found: "found", missing: "not found", shards: "shards",
+    download: "Download", download_hint: "downloads ~{gb} GB from Hugging Face with resume; needs that much free disk",
+    s2: "Data", s2_hint: "Domain data: what the model should learn, a chat jsonl, one dialog per line: {\"messages\": [{\"role\": \"system\"|\"user\"|\"assistant\", \"content\": \"...\"}]}. General data: ordinary text in the same language, used to find which experts are specific to your domain.",
+    domain: "Domain data", general: "General data", upload: "Upload .jsonl", path: "path", check: "Check",
+    tok_stats: "Token statistics", build_general: "Build general corpus (Russian wiki + chats)",
+    rows: "rows", chats: "dialogs", texts: "text rows", ans_med: "answer, median chars", ans_p95: "answer, p95 chars",
+    turns: "answers per dialog", dups: "duplicate lines", errors: "errors",
+    w_errors: "Some lines are invalid and will fail the pipeline; fix them first.",
+    w_few: "Fewer than 200 dialogs: the adapter will mostly memorize them.",
+    w_short: "{p} of the answers are shorter than 20 characters. The model copies answer length.",
+    w_nospace: "{p} of the answers have no space after punctuation. The model copies such defects.",
+    w_dups: "Many duplicate lines.",
+    ok_data: "Format is valid.", sample: "First dialog",
+    s3: "Profiling", s3_hint: "Runs your data and the general text through the model and records which experts the router picks in each layer (~6 min for Qwen). Also caches the inputs of candidate cut layers.",
+    probe: "Run profiling", fresh: "start over", report: "Report",
+    s4: "Expert selection", s4_hint: "Chooses the cut layer L (layers below it stay frozen and are computed once) and the experts that get LoRA, and estimates memory and time. Leave L empty to use the rule from the profile.",
+    coverage: "coverage (0-1)", L_override: "force L", vram: "VRAM budget, GB", ram: "RAM budget, GB",
+    select: "Select experts", L: "cut layer L", L_auto: "L by the rule", experts: "trainable experts",
+    mode: "block mode", vram_est: "VRAM needed, GB", epoch_min: "minutes per epoch", lora_m: "LoRA params, M",
+    s5: "Preparation", s5_hint: "Cache: the input of layer L for every dialog (reused from profiling when possible). Pack: the trainable block on disk with int4 frozen experts, checked against bf16.",
+    cache: "Build cache", pack: "Pack block",
+    s6: "Training", s6_hint: "LoRA training of the block. Run a few steps first to check speed and memory, then the full run with \"resume\".",
+    lr: "learning rate", epochs: "epochs", r: "LoRA rank", alpha: "alpha", tps: "tokens per step",
+    tag: "run name", tag_ph: "default L{L}", max_steps: "max steps", resume: "resume", train: "Start training",
+    run: "Run", loss: "train loss", val: "validation loss", step: "step", no_runs: "No training runs yet.",
+    last: "last step", tok_s: "tokens/s", step_s: "s/step", vram_peak: "VRAM peak, GB",
+    s7: "Tests", s7_hint: "Perplexity before and after training on held-out dialogs of your domain and on the general text. Domain perplexity should fall; general perplexity growing by more than 5% means the model forgets. Perplexity alone does not show answer quality: also compare answers with the base model.",
+    adapter: "adapter", packed: "int4 block (as in training)", evaluate: "Evaluate",
+    set: "set", before: "before", after: "after", change: "change", no_eval: "No evaluated adapters yet.",
+    selftest: "Self-test of the installation (pytest, ~40 s, needs CUDA)",
+    progress: "Progress log", busy: "Another job is running.", saved: "saved",
+    confirm_dl: "Download ~{gb} GB into {dir}?", confirm_all: "Run {stages} one after another? This can take hours.",
+    general_lbl: "general", domain_lbl: "domain"
+  },
+  ru: {
+    tagline: "LoRA на экспертах большой MoE, выбранных по роутеру, на одной домашней видеокарте",
+    projects: "Проекты", new_project: "Новый проект", name: "Название", model: "Модель",
+    model_dir_opt: "Папка модели (необязательно)", create: "Создать", pick: "Создайте проект или выберите слева.",
+    console: "Задача", stop: "Остановить", follow: "следить", hide: "скрыть", show: "показать", idle: "нет задачи",
+    running: "идёт", done: "готово", failed: "ошибка", stopped: "остановлено",
+    run_all: "Запустить все стадии", from: "начиная с", disk_free: "свободно на рабочем диске", save: "Сохранить",
+    s1: "Модель", s1_hint: "Исходные веса bf16 (safetensors). Они только читаются и никогда не меняются.",
+    model_dir: "Папка модели", found: "найдена", missing: "не найдена", shards: "файлов",
+    download: "Скачать", download_hint: "скачает ~{gb} ГБ с Hugging Face с докачкой; столько же нужно свободного места",
+    s2: "Данные", s2_hint: "Данные домена — то, чему учить модель: chat jsonl, по диалогу в строке: {\"messages\": [{\"role\": \"system\"|\"user\"|\"assistant\", \"content\": \"...\"}]}. Общие данные — обычный текст на том же языке, по нему видно, какие эксперты специфичны для вашего домена.",
+    domain: "Данные домена", general: "Общие данные", upload: "Загрузить .jsonl", path: "путь", check: "Проверить",
+    tok_stats: "Статистика токенов", build_general: "Собрать общий корпус (русская вики + чаты)",
+    rows: "строк", chats: "диалогов", texts: "текстовых строк", ans_med: "ответ, медиана символов", ans_p95: "ответ, p95 символов",
+    turns: "ответов в диалоге", dups: "повторов строк", errors: "ошибок",
+    w_errors: "Часть строк некорректна, конвейер на них упадёт — сначала исправьте.",
+    w_few: "Меньше 200 диалогов: адаптер в основном их запомнит.",
+    w_short: "{p} ответов короче 20 символов. Модель перенимает длину ответов.",
+    w_nospace: "В {p} ответов нет пробела после знаков препинания. Модель перенимает такие дефекты.",
+    w_dups: "Много повторяющихся строк.",
+    ok_data: "Формат правильный.", sample: "Первый диалог",
+    s3: "Профилирование", s3_hint: "Прогоняет ваши данные и общий текст через модель и записывает, каких экспертов роутер выбирает в каждом слое (~6 мин для Qwen). Заодно сохраняет входы слоёв-кандидатов на разрез.",
+    probe: "Запустить профилирование", fresh: "заново", report: "Отчёт",
+    s4: "Выбор экспертов", s4_hint: "Выбирает слой разреза L (слои ниже заморожены и считаются один раз) и экспертов, которые получат LoRA, и оценивает память и время. Оставьте L пустым — его выберет правило по профилю.",
+    coverage: "покрытие (0-1)", L_override: "задать L", vram: "бюджет VRAM, ГБ", ram: "бюджет RAM, ГБ",
+    select: "Выбрать экспертов", L: "слой разреза L", L_auto: "L по правилу", experts: "обучаемых экспертов",
+    mode: "режим блока", vram_est: "нужно VRAM, ГБ", epoch_min: "минут на эпоху", lora_m: "параметров LoRA, млн",
+    s5: "Подготовка", s5_hint: "Кэш: вход слоя L для каждого диалога (берётся из профилирования, если есть). Упаковка: обучаемый блок на диске с замороженными экспертами в int4, со сверкой с bf16.",
+    cache: "Собрать кэш", pack: "Упаковать блок",
+    s6: "Обучение", s6_hint: "Обучение LoRA блока. Сначала запустите несколько шагов, чтобы проверить скорость и память, затем полный прогон с «продолжить».",
+    lr: "скорость обучения", epochs: "эпох", r: "ранг LoRA", alpha: "alpha", tps: "токенов на шаг",
+    tag: "имя прогона", tag_ph: "по умолчанию L{L}", max_steps: "не больше шагов", resume: "продолжить", train: "Начать обучение",
+    run: "Прогон", loss: "loss обучения", val: "loss валидации", step: "шаг", no_runs: "Прогонов обучения пока нет.",
+    last: "последний шаг", tok_s: "токенов/с", step_s: "с/шаг", vram_peak: "пик VRAM, ГБ",
+    s7: "Тесты", s7_hint: "Перплексия до и после обучения на отложенных диалогах домена и на общем тексте. Перплексия домена должна упасть; рост общей больше чем на 5% значит, что модель забывает. Одна перплексия не показывает качество ответов — сравните ответы и с базовой моделью.",
+    adapter: "адаптер", packed: "блок int4 (как при обучении)", evaluate: "Оценить",
+    set: "набор", before: "до", after: "после", change: "изменение", no_eval: "Оценённых адаптеров пока нет.",
+    selftest: "Самопроверка установки (pytest, ~40 с, нужна CUDA)",
+    progress: "Журнал прогресса", busy: "Уже идёт другая задача.", saved: "сохранено",
+    confirm_dl: "Скачать ~{gb} ГБ в {dir}?", confirm_all: "Запустить {stages} друг за другом? Это может занять часы.",
+    general_lbl: "общий", domain_lbl: "домен"
+  }
+};
+let lang = "en";
+try { lang = new URLSearchParams(location.search).get("lang") || localStorage.getItem("smel_lang") ||
+  ((navigator.language || "").startsWith("ru") ? "ru" : "en"); } catch (e) {}
+if (lang !== "ru") lang = "en";
+const t = (k, v) => { let s = (T[lang][k] ?? T.en[k] ?? k); for (const x in v || {}) s = s.replace("{" + x + "}", v[x]); return s; };
+function applyI18n(root = document) {
+  root.querySelectorAll("[data-i]").forEach(el => el.textContent = t(el.dataset.i));
+  document.documentElement.lang = lang;
+  $("#lang").textContent = lang === "en" ? "Русский" : "English";
+}
+
+// ---------------------------------------------------------------------------------------------- helpers
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const fmt = (x, d = 2) => x == null || isNaN(x) ? "–" : Number(x).toFixed(d);
+const pct = x => (100 * x).toFixed(0) + "%";
+async function api(method, url, body, raw) {
+  const opt = {method, headers: {}};
+  if (raw) opt.body = raw;
+  else if (body !== undefined) { opt.body = JSON.stringify(body); opt.headers["Content-Type"] = "application/json"; }
+  const r = await fetch(url, opt);
+  const ct = r.headers.get("Content-Type") || "";
+  const data = ct.includes("json") ? await r.json() : await r.text();
+  if (!r.ok) throw new Error((data && data.error) || r.statusText);
+  return data;
+}
+function md(src, base) {   // small markdown subset: headings, tables, lists, images, code, bold
+  const inline = s => esc(s)
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (m, a, u) => `<img alt="${a}" src="${/^https?:/.test(u) ? u : base + encodeURIComponent(u)}">`)
+    .replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const lines = src.split(/\r?\n/), out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^```/.test(l)) { const b = []; while (++i < lines.length && !/^```/.test(lines[i])) b.push(esc(lines[i])); out.push("<pre><code>" + b.join("\n") + "</code></pre>"); continue; }
+    const h = l.match(/^(#{1,4})\s+(.*)/);
+    if (h) { out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); continue; }
+    if (/^\|/.test(l)) {
+      const rows = []; while (i < lines.length && /^\|/.test(lines[i])) rows.push(lines[i++]); i--;
+      const cells = r => r.replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      let html = "<div class='scroll'><table><tr>" + cells(rows[0]).map(c => "<th>" + inline(c) + "</th>").join("") + "</tr>";
+      for (const r of rows.slice(1)) if (!/^\|[\s:|-]+\|$/.test(r)) html += "<tr>" + cells(r).map(c => "<td>" + inline(c) + "</td>").join("") + "</tr>";
+      out.push(html + "</table></div>"); continue;
+    }
+    if (/^\s*[-*]\s+/.test(l)) {
+      const it = []; while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) it.push(lines[i++].replace(/^\s*[-*]\s+/, "")); i--;
+      out.push("<ul>" + it.map(x => "<li>" + inline(x) + "</li>").join("") + "</ul>"); continue;
+    }
+    if (l.trim()) out.push("<p>" + inline(l) + "</p>");
+  }
+  return out.join("\n");
+}
+
+// ---------------------------------------------------------------------------------------------- state
+let S = {models: {}, projects: [], job: null}, P = null, cur = null, jobOffset = 0, jobKey = null, logText = "";
+const datasets = {};
+const running = () => S.job && S.job.state === "running";
+
+async function loadState() {
+  try { S = await api("GET", "/api/state"); } catch (e) { return; }
+  renderSys(); renderProjects();
+  if (S.job && jobKey !== S.job.started) attachJob(S.job);
+}
+function renderSys() {
+  const s = S.system || {}, g = s.gpu, r = s.ram, c = [];
+  if (g) c.push(`${esc(g.name)} · VRAM ${fmt(g.mem_used_gb, 1)}/${fmt(g.mem_total_gb, 1)} GB · ${g.temp}°C · ${g.util}%`);
+  if (r) c.push(`RAM ${fmt(r.used_gb, 1)}/${fmt(r.total_gb, 1)} GB`);
+  if (P && P.disk_free_gb != null) c.push(`${fmt(P.disk_free_gb, 0)} GB ${t("disk_free")}`);
+  $("#sys").innerHTML = c.map(x => `<span class="chip">${x}</span>`).join("");
+}
+function renderProjects() {
+  const sel = $("#np_model");
+  if (!sel.options.length) for (const [k, m] of Object.entries(S.models)) sel.add(new Option(m.label, k));
+  $("#plist").innerHTML = S.projects.map(p => `<button class="proj ${p.name === cur ? "on" : ""}" data-p="${esc(p.name)}">${esc(p.name)}<small>${esc((S.models[p.model] || {}).label || "")}</small></button>`).join("");
+  $("#plist").querySelectorAll(".proj").forEach(b => b.onclick = () => openProject(b.dataset.p));
+}
+async function openProject(name) {
+  cur = name;
+  try { localStorage.setItem("smel_project", name); } catch (e) {}
+  renderProjects();
+  await refresh();
+}
+async function refresh() {
+  if (!cur) return;
+  try { P = await api("GET", `/api/projects/${encodeURIComponent(cur)}`); } catch (e) { $("#main").innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  renderProject();
+  renderSys();
+}
+
+// ---------------------------------------------------------------------------------------------- project view
+const num = (k, ok) => `<span class="num ${ok ? "ok" : ""}">${ok ? "✓" : k}</span>`;
+const badge = ok => `<span class="badge ${ok ? "ok" : "no"}">${t(ok ? "found" : "missing")}</span>`;
+const inp = (key, lbl, type = "number", step = "any", cls = "") => `<label class="f ${cls}"><span>${t(lbl)}</span><input data-k="${key}" type="${type}" step="${step}" value="${esc(P.settings[key] ?? "")}"></label>`;
+const btn = (stage, lbl, primary, extra = "") => `<button class="${primary ? "primary" : ""} run" data-stage="${stage}" ${extra}>${t(lbl)}</button>`;
+
+function renderProject() {
+  const s = P.status, st = s.select || {}, est = st.estimate || {}, m = P.model_info || {};
+  const report = f => P.reports.includes(f) ? `<details><summary>${t("report")}: ${f}</summary><div class="md" data-report="${f}"></div></details>` : "";
+  const evals = P.adapters.filter(a => a.eval);
+  $("#main").innerHTML = `
+  <div class="card">
+    <div class="row" style="justify-content:space-between;margin:0">
+      <div><h2 style="margin:0">${esc(P.name)} <span class="badge no">${esc(m.label || P.model)}</span></h2></div>
+      <div class="row" style="margin:0">
+        <label class="f"><span>${t("from")}</span><select id="pl_from">${["probe", "select", "cache", "pack", "train", "eval"].map(x => `<option>${x}</option>`).join("")}</select></label>
+        ${btn("pipeline", "run_all", true)}
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="c1">
+    <h2>${num(1, s.model.ok)} ${t("s1")}</h2>
+    <p class="hint">${t("s1_hint")}</p>
+    <div class="row">${inp("paths.model_dir", "model_dir", "text", "", "grow")}<button class="save">${t("save")}</button></div>
+    <div class="row">${badge(s.model.ok)} ${s.model.ok ? `<span class="chip">${s.model.shards} ${t("shards")}</span>` : ""}
+      ${s.model.ok ? "" : btn("download", "download", false) + `<span class="hint" style="margin:0">${t("download_hint", {gb: m.size_gb})}</span>`}</div>
+  </div>
+
+  <div class="card" id="c2">
+    <h2>${num(2, s.domain.ok && s.general.ok)} ${t("s2")}</h2>
+    <p class="hint">${t("s2_hint")}</p>
+    ${["domain", "general"].map(kind => `
+      <h3 style="font-size:14px;margin:14px 0 4px">${t(kind)} ${badge(s[kind].ok)}</h3>
+      <div class="row">
+        <label class="f"><span>${t("upload")}</span><input type="file" accept=".jsonl,.json,.txt" data-upload="${kind}"></label>
+        ${inp(`paths.${kind}_data`, "path", "text", "", "grow")}<button class="save">${t("save")}</button>
+        <button data-check="${kind}">${t("check")}</button>
+        ${kind === "domain" ? btn("stats", "tok_stats", false, s.model.ok && s.domain.ok ? "" : "disabled") : btn("general", "build_general", false, s.model.ok ? "" : "disabled")}
+      </div>
+      <div data-ds="${kind}"></div>`).join("")}
+  </div>
+
+  <div class="card" id="c3">
+    <h2>${num(3, s.probe.ok)} ${t("s3")}</h2>
+    <p class="hint">${t("s3_hint")}</p>
+    <div class="row">${btn("probe", "probe", true, s.model.ok && s.domain.ok && s.general.ok ? "" : "disabled")}
+      <label class="cb"><input type="checkbox" id="probe_fresh">${t("fresh")}</label></div>
+    ${report("probe.md")}
+  </div>
+
+  <div class="card" id="c4">
+    <h2>${num(4, st.ok)} ${t("s4")}</h2>
+    <p class="hint">${t("s4_hint")}</p>
+    <div class="row">${inp("select.coverage", "coverage", "number", "0.05")}${inp("select.L_override", "L_override", "number", "1")}
+      ${inp("select.vram_budget_gb", "vram", "number", "0.5")}${inp("select.ram_budget_gb", "ram", "number", "0.5")}
+      <button class="save">${t("save")}</button>${btn("select", "select", true, s.probe.ok ? "" : "disabled")}</div>
+    ${st.ok ? `<div class="kv">
+      <div><b>${st.L}</b><span>${t("L")}</span></div><div><b>${st.L_auto ?? "–"}</b><span>${t("L_auto")}</span></div>
+      <div><b>${st.experts}</b><span>${t("experts")}</span></div><div><b>${esc(st.mode)}</b><span>${t("mode")}</span></div>
+      <div><b>${fmt(st.mode === "resident" ? est.vram_resident_GB : est.vram_stream_GB, 1)}</b><span>${t("vram_est")}</span></div>
+      <div><b>${fmt(st.mode === "resident" ? est.epoch_min_resident : est.epoch_min_stream, 1)}</b><span>${t("epoch_min")}</span></div>
+      <div><b>${fmt(est.lora_params_M, 1)}</b><span>${t("lora_m")}</span></div></div>` : ""}
+    ${report("select.md")}
+  </div>
+
+  <div class="card" id="c5">
+    <h2>${num(5, s.cache.ok && s.pack.ok)} ${t("s5")}</h2>
+    <p class="hint">${t("s5_hint")}</p>
+    <div class="row">${btn("cache", "cache", !s.cache.ok, st.ok ? "" : "disabled")} ${badge(s.cache.ok)}
+      ${btn("pack", "pack", s.cache.ok && !s.pack.ok, st.ok ? "" : "disabled")} ${badge(s.pack.ok)}</div>
+    ${report("pack.md")}
+  </div>
+
+  <div class="card" id="c6">
+    <h2>${num(6, s.train.ok)} ${t("s6")}</h2>
+    <p class="hint">${t("s6_hint")}</p>
+    <div class="row">${inp("train.lr", "lr", "number", "any")}${inp("train.epochs", "epochs", "number", "1")}${inp("train.r", "r", "number", "1")}
+      ${inp("train.alpha", "alpha", "number", "1")}${inp("train.tokens_per_step", "tps", "number", "1024")}<button class="save">${t("save")}</button></div>
+    <div class="row">
+      <label class="f"><span>${t("tag")}</span><input id="tr_tag" placeholder="${t("tag_ph", {L: st.L ?? "?"})}"></label>
+      <label class="f"><span>${t("max_steps")}</span><input id="tr_max" type="number" min="1" placeholder="5"></label>
+      <label class="cb"><input type="checkbox" id="tr_resume">${t("resume")}</label>
+      ${btn("train", "train", true, s.cache.ok && s.pack.ok ? "" : "disabled")}
+    </div>
+    <div id="trainview"></div>
+  </div>
+
+  <div class="card" id="c7">
+    <h2>${num(7, s.eval.ok)} ${t("s7")}</h2>
+    <p class="hint">${t("s7_hint")}</p>
+    <div class="row">
+      <label class="f"><span>${t("adapter")}</span><select id="ev_tag">${P.adapters.map(a => `<option>${esc(a.tag)}</option>`).join("")}</select></label>
+      <label class="cb"><input type="checkbox" id="ev_packed">${t("packed")}</label>
+      ${btn("eval", "evaluate", true, P.adapters.length ? "" : "disabled")}
+    </div>
+    ${evals.length ? `<div class="scroll"><table><tr><th>${t("adapter")}</th><th>${t("set")}</th><th>${t("before")}</th><th>${t("after")}</th><th>${t("change")}</th></tr>
+      ${evals.flatMap(a => ["domain", "general"].map(k => { const e = a.eval[k]; if (!e) return "";
+        const ch = e.ppl_change, good = k === "domain" ? ch < 0 : ch <= 0.05;
+        return `<tr><td>${esc(a.tag)}</td><td>${t(k + "_lbl")}</td><td>${fmt(Math.exp(e.base_loss), 3)}</td><td>${fmt(Math.exp(e.adapter_loss), 3)}</td>
+          <td><span class="badge ${good ? "ok" : "warn"}">${ch > 0 ? "+" : ""}${(100 * ch).toFixed(1)}%</span></td></tr>`; })).join("")}</table></div>`
+      : `<p class="hint">${t("no_eval")}</p>`}
+    ${report("eval.md")}
+    <div class="row" style="margin-top:14px">${btn("selftest", "selftest", false)}</div>
+    ${P.progress ? `<details><summary>${t("progress")}</summary><div class="md" data-report="progress"></div></details>` : ""}
+  </div>`;
+  wireProject();
+  for (const k of ["domain", "general"]) if (datasets[cur + k]) renderDataset(k, datasets[cur + k]);
+  renderTrain();
+  setBusy();
+}
+
+function wireProject() {
+  const main = $("#main");
+  main.querySelectorAll("button.save").forEach(b => b.onclick = async () => {
+    const vals = {};
+    b.closest(".card").querySelectorAll("input[data-k]").forEach(i => vals[i.dataset.k] = i.value);
+    try { await api("PUT", `/api/projects/${cur}/settings`, vals); b.textContent = t("saved"); setTimeout(refresh, 600); }
+    catch (e) { alert(e.message); }
+  });
+  main.querySelectorAll("button.run").forEach(b => b.onclick = () => runStage(b.dataset.stage, b));
+  main.querySelectorAll("[data-upload]").forEach(i => i.onchange = async () => {
+    const f = i.files[0]; if (!f) return;
+    const kind = i.dataset.upload, box = main.querySelector(`[data-ds="${kind}"]`);
+    box.innerHTML = `<p class="hint">${esc(f.name)} · ${(f.size / 2 ** 20).toFixed(1)} MB …</p>`;
+    try { datasets[cur + kind] = await api("PUT", `/api/projects/${cur}/upload?kind=${kind}`, undefined, f); await refresh(); }
+    catch (e) { box.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+  });
+  main.querySelectorAll("[data-check]").forEach(b => b.onclick = async () => {
+    const kind = b.dataset.check;
+    try { datasets[cur + kind] = await api("GET", `/api/projects/${cur}/dataset?kind=${kind}`); renderDataset(kind, datasets[cur + kind]); }
+    catch (e) { alert(e.message); }
+  });
+  main.querySelectorAll("details").forEach(d => d.ontoggle = async () => {
+    const box = d.querySelector("[data-report]"); if (!d.open || box.dataset.loaded) return;
+    const f = box.dataset.report;
+    try { box.innerHTML = md(await api("GET", `/api/projects/${cur}/report?file=${encodeURIComponent(f)}`), `/api/projects/${cur}/report?file=`); box.dataset.loaded = 1; }
+    catch (e) { box.textContent = e.message; }
+  });
+}
+
+function renderDataset(kind, d) {
+  const box = $(`[data-ds="${kind}"]`); if (!box) return;
+  if (!d.exists) { box.innerHTML = `<p class="err">${esc(d.path)}: ${t("missing")}</p>`; return; }
+  const W = {errors: "w_errors", few: "w_few", short: "w_short", nospace: "w_nospace", dups: "w_dups"};
+  const warns = d.warnings.map(w => `<li class="${w === "errors" ? "bad" : ""}">${t(W[w], {p: w === "short" ? pct(d.short_answers) : pct(d.no_space_after_punct)})}</li>`).join("");
+  box.innerHTML = `<div class="kv">
+      <div><b>${d.rows}</b><span>${t("rows")} · ${d.size_mb} MB</span></div>
+      <div><b>${d.chats}</b><span>${t("chats")}</span></div>
+      ${d.texts ? `<div><b>${d.texts}</b><span>${t("texts")}</span></div>` : ""}
+      ${d.chats ? `<div><b>${d.turns_per_chat}</b><span>${t("turns")}</span></div>
+      <div><b>${d.assistant_chars_median}</b><span>${t("ans_med")}</span></div>
+      <div><b>${d.assistant_chars_p95}</b><span>${t("ans_p95")}</span></div>` : ""}
+      <div><b>${d.duplicates}</b><span>${t("dups")}</span></div>
+      <div><b>${d.n_errors}</b><span>${t("errors")}</span></div></div>
+    ${warns ? `<ul class="warns">${warns}</ul>` : `<p><span class="badge ok">${t("ok_data")}</span></p>`}
+    ${d.errors.length ? `<pre class="md" style="max-height:140px">${d.errors.map(esc).join("\n")}</pre>` : ""}
+    ${d.sample.length ? `<details><summary>${t("sample")}</summary><div class="sample">${d.sample.map(m => `<div class="m"><i>${esc(m.role)}</i>${esc(m.content)}</div>`).join("")}</div></details>` : ""}`;
+}
+
+// ---------------------------------------------------------------------------------------------- training chart
+let trainSel = null;
+async function renderTrain() {
+  const box = $("#trainview"); if (!box) return;
+  if (!P.train_runs.length) { box.innerHTML = `<p class="hint">${t("no_runs")}</p>`; return; }
+  if (!P.train_runs.includes(trainSel)) trainSel = P.train_runs[P.train_runs.length - 1];
+  let d;
+  try { d = await api("GET", `/api/projects/${cur}/train/${encodeURIComponent(trainSel)}`); } catch (e) { return; }
+  const last = d.steps[d.steps.length - 1] || {};
+  box.innerHTML = `<div class="row"><label class="f"><span>${t("run")}</span><select id="tr_run">${P.train_runs.map(r => `<option ${r === trainSel ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label></div>
+    <div class="kv"><div><b>${last.step ?? "–"}</b><span>${t("last")}</span></div><div><b>${fmt(last.loss, 3)}</b><span>${t("loss")}</span></div>
+      <div><b>${fmt([...d.steps].reverse().find(x => x.val != null)?.val, 3)}</b><span>${t("val")}</span></div>
+      <div><b>${fmt(last.tok_s, 0)}</b><span>${t("tok_s")}</span></div><div><b>${fmt(last.step_s, 1)}</b><span>${t("step_s")}</span></div>
+      <div><b>${fmt(last.vram_peak_gb, 2)}</b><span>${t("vram_peak")}</span></div></div>
+    <div class="chart" id="chart"></div>
+    <div class="legend"><span><i style="background:var(--series-1)"></i>${t("loss")}</span><span><i style="background:var(--series-2)"></i>${t("val")}</span></div>`;
+  $("#tr_run").onchange = e => { trainSel = e.target.value; renderTrain(); };
+  drawChart($("#chart"), d);
+}
+function drawChart(el, d) {
+  const pts = d.steps, val = pts.filter(p => p.val != null).map(p => ({step: p.step, v: p.val}));
+  if (d.val0 != null) val.unshift({step: 0, v: d.val0});
+  if (!pts.length) return;
+  const W = el.clientWidth || 600, H = 260, m = {l: 54, r: 12, t: 10, b: 26};
+  const xs = [0, Math.max(...pts.map(p => p.step))], all = pts.map(p => p.loss).concat(val.map(v => v.v));
+  let lo = Math.min(...all), hi = Math.max(...all); const pad = (hi - lo) * 0.08 || 0.1; lo -= pad; hi += pad;
+  const X = s => m.l + (s - xs[0]) / (xs[1] - xs[0] || 1) * (W - m.l - m.r), Y = v => m.t + (hi - v) / (hi - lo) * (H - m.t - m.b);
+  const ticks = 4, grid = [], dec = Math.min(5, Math.max(2, Math.ceil(-Math.log10((hi - lo) / ticks)) + 1));
+  for (let i = 0; i <= ticks; i++) { const v = lo + (hi - lo) * i / ticks; grid.push(`<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${m.l - 6}" y="${Y(v) + 4}" text-anchor="end">${v.toFixed(dec)}</text>`); }
+  const xt = []; for (let i = 0; i <= 4; i++) { const s = Math.round(xs[1] * i / 4); xt.push(`<text x="${X(s)}" y="${H - 6}" text-anchor="middle">${s}</text>`); }
+  const path = (a, f) => a.map((p, i) => (i ? "L" : "M") + X(p.step).toFixed(1) + "," + Y(f(p)).toFixed(1)).join("");
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${t("loss")} / ${t("val")}">
+    <g class="grid">${grid.join("")}</g>${xt.join("")}
+    <path d="${path(pts, p => p.loss)}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round"/>
+    ${val.length ? `<path d="${path(val, p => p.v)}" fill="none" stroke="var(--series-2)" stroke-width="2" stroke-linejoin="round"/>` : ""}
+    ${val.map(p => `<circle cx="${X(p.step)}" cy="${Y(p.v)}" r="4" fill="var(--series-2)" stroke="var(--surface)" stroke-width="2"/>`).join("")}
+    <line id="xh" y1="${m.t}" y2="${H - m.b}" stroke="var(--muted)" stroke-width="1" visibility="hidden"/>
+    <rect x="${m.l}" y="${m.t}" width="${W - m.l - m.r}" height="${H - m.t - m.b}" fill="transparent" id="hit"/></svg>
+    <div class="tip" id="tip"></div>`;
+  const tip = el.querySelector("#tip"), xh = el.querySelector("#xh");
+  el.querySelector("#hit").onpointermove = e => {
+    const r = el.getBoundingClientRect(), sx = (e.clientX - r.left) * W / r.width;
+    const step = xs[0] + (sx - m.l) / (W - m.l - m.r) * (xs[1] - xs[0]);
+    const p = pts.reduce((a, b) => Math.abs(b.step - step) < Math.abs(a.step - step) ? b : a);
+    const v = val.length ? val.reduce((a, b) => Math.abs(b.step - p.step) < Math.abs(a.step - p.step) ? b : a) : null;
+    xh.setAttribute("x1", X(p.step)); xh.setAttribute("x2", X(p.step)); xh.setAttribute("visibility", "visible");
+    tip.replaceChildren();
+    const row = (color, value, label) => { const dv = document.createElement("div"); const i = document.createElement("i"); i.style.background = color;
+      const b = document.createElement("b"); b.textContent = value; dv.append(i, b, document.createTextNode(" " + label)); tip.append(dv); };
+    const hd = document.createElement("div"); hd.textContent = `${t("step")} ${p.step} · ep ${p.epoch ?? "–"}`; tip.append(hd);
+    row("var(--series-1)", fmt(p.loss, 4), t("loss"));
+    if (v) row("var(--series-2)", fmt(v.v, 4), `${t("val")} (${t("step")} ${v.step})`);
+    tip.style.display = "block";
+    const px = X(p.step) * r.width / W;
+    tip.style.left = Math.min(px + 12, r.width - tip.offsetWidth - 4) + "px"; tip.style.top = "8px";
+  };
+  el.querySelector("#hit").onpointerleave = () => { tip.style.display = "none"; xh.setAttribute("visibility", "hidden"); };
+}
+
+// ---------------------------------------------------------------------------------------------- jobs
+async function runStage(stage, b) {
+  if (running()) { alert(t("busy")); return; }
+  const params = {};
+  if (stage === "probe") params.fresh = $("#probe_fresh").checked;
+  if (stage === "train" || stage === "pipeline") {
+    params.tag = $("#tr_tag").value.trim();
+    if (stage === "train") { params.max_steps = $("#tr_max").value || null; params.resume = $("#tr_resume").checked; }
+  }
+  if (stage === "eval") { params.tag = $("#ev_tag").value; params.packed = $("#ev_packed").checked; }
+  if (stage === "download" && !confirm(t("confirm_dl", {gb: P.model_info.size_gb, dir: P.settings["paths.model_dir"]}))) return;
+  if (stage === "pipeline") {
+    params.from = $("#pl_from").value;
+    const all = ["probe", "select", "cache", "pack", "train", "eval"];
+    if (!confirm(t("confirm_all", {stages: all.slice(all.indexOf(params.from)).join(" → ")}))) return;
+  }
+  try { const j = await api("POST", `/api/projects/${cur}/run`, {stage, params}); attachJob(j); }
+  catch (e) { alert(e.message); }
+}
+function attachJob(j) {
+  jobKey = j.started; jobOffset = 0; logText = "";
+  S.job = j; $("#jlog").textContent = ""; pollJob();
+}
+function appendLog(s) {   // tqdm-style progress lines rewrite themselves with \r
+  logText += s;
+  logText = logText.replace(/[^\n]*\r(?!\n)/g, "");
+  if (logText.length > 400000) logText = logText.slice(-300000);
+  const el = $("#jlog"); el.textContent = logText;
+  if ($("#jfollow").checked) el.scrollTop = el.scrollHeight;
+}
+let pollTimer = null;
+async function pollJob() {
+  clearTimeout(pollTimer);
+  let j;
+  try { j = await api("GET", `/api/job?since=${jobOffset}`); } catch (e) { pollTimer = setTimeout(pollJob, 3000); return; }
+  if (!j) return;
+  const wasRunning = running();
+  if (j.log) appendLog(j.log);
+  jobOffset = j.offset; S.job = j;
+  renderJob();
+  if (j.state === "running") pollTimer = setTimeout(pollJob, 1000);
+  else if (wasRunning) refresh();
+  if (j.state === "running" && j.stage === "train" && Date.now() - (pollJob.tr || 0) > 15000 && j.project === cur) { pollJob.tr = Date.now(); refresh(); }
+}
+function renderJob() {
+  const j = S.job, st = $("#jstate");
+  if (!j) { st.textContent = t("idle"); st.className = "badge no"; $("#jinfo").textContent = ""; $("#jstop").disabled = true; return; }
+  st.textContent = t(j.state);
+  st.className = "badge " + ({running: "warn", done: "ok", failed: "bad", stopped: "no"}[j.state]);
+  const el = ((j.ended || Date.now() / 1000) - j.started) / 60;
+  $("#jinfo").textContent = `${j.project} · ${j.stage}${j.steps > 1 ? ` ${j.step + 1}/${j.steps}` : ""} · ${el.toFixed(1)} min`;
+  $("#jstop").disabled = j.state !== "running";
+  setBusy();
+}
+function setBusy() {
+  document.querySelectorAll("button.run").forEach(b => { if (running()) { b.dataset.wasDisabled ??= b.disabled; b.disabled = true; }
+    else if (b.dataset.wasDisabled !== undefined) { b.disabled = b.dataset.wasDisabled === "true"; delete b.dataset.wasDisabled; } });
+}
+
+// ---------------------------------------------------------------------------------------------- wiring
+$("#jstop").onclick = () => api("POST", "/api/job/stop");
+$("#jtoggle").onclick = () => { const c = $("#console"); c.classList.toggle("min"); $("#layout").classList.toggle("min");
+  $("#jtoggle").textContent = t(c.classList.contains("min") ? "show" : "hide"); };
+$("#lang").onclick = () => { lang = lang === "en" ? "ru" : "en"; try { localStorage.setItem("smel_lang", lang); } catch (e) {}
+  applyI18n(); renderJob(); renderSys(); if (P) renderProject(); };
+$("#np_go").onclick = async () => {
+  $("#np_err").textContent = "";
+  try { const p = await api("POST", "/api/projects", {name: $("#np_name").value.trim(), model: $("#np_model").value, model_dir: $("#np_dir").value.trim()});
+    await loadState(); openProject(p.name); }
+  catch (e) { $("#np_err").textContent = e.message; }
+};
+window.addEventListener("resize", () => { clearTimeout(window._rs); window._rs = setTimeout(renderTrain, 200); });
+
+applyI18n(); renderJob();
+(async () => {
+  await loadState();
+  let last = new URLSearchParams(location.search).get("project"); try { last = last || localStorage.getItem("smel_project"); } catch (e) {}
+  if (last && S.projects.some(p => p.name === last)) openProject(last);
+  else if (S.projects.length) openProject(S.projects[0].name);
+  setInterval(loadState, 5000);
+})();
+</script>
+</body>
+</html>

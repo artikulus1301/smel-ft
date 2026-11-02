@@ -1,6 +1,6 @@
 """Build the 'general' Russian corpus for router comparison: Russian Wikipedia paragraphs (plain text) + Russian
 assistant chats (GrandMaster-PRO-MAX test split). Output: chat/text jsonl in paths.general_data.
-Usage: python scripts/make_general.py [--wiki-tokens 100000] [--chat-tokens 100000]
+Usage: python scripts/make_general.py [--config c.yaml] [--wiki-tokens 100000] [--chat-tokens 100000]
 """
 import argparse
 import json
@@ -12,14 +12,16 @@ import pyarrow.parquet as pq
 from huggingface_hub import hf_hub_download
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from smel.pipeline import load_config  # noqa: E402
+from smel.pipeline import load_config, parse_overrides  # noqa: E402
 
 ap = argparse.ArgumentParser()
+ap.add_argument("--config")
+ap.add_argument("--set", nargs="*", default=[])
 ap.add_argument("--wiki-tokens", type=int, default=100000)
 ap.add_argument("--chat-tokens", type=int, default=100000)
 ap.add_argument("--seed", type=int, default=0)
 args = ap.parse_args()
-cfg = load_config()
+cfg = load_config(args.config, parse_overrides(args.set))
 out = cfg["paths"]["general_data"]
 raw = os.path.join(os.path.dirname(out), "raw")
 os.makedirs(raw, exist_ok=True)
