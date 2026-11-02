@@ -19,9 +19,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import yaml
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import chat_backend as cb
+
+ROOT =os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECTS = os.path.join(ROOT, "configs", "projects")
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
+CHAT_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chat.html")
 
 MODELS = {
     "qwen": {"label": "Qwen3.6-35B-A3B", "config": "configs/default.yaml", "repo": "Qwen/Qwen3.6-35B-A3B",
@@ -421,6 +424,8 @@ def start_job(name, stage, params):
         cur = JOB["cur"]
         if cur and cur.state == "running":
             raise RuntimeError(f"busy: {cur.project}/{cur.stage} is running")
+        if cb.MODEL.running():      # the chat model and a stage would not fit in VRAM together
+            raise RuntimeError("busy: the chat model is loaded; stop it in the Chat window first")
         cmds = stage_commands(name, stage, params or {})
         cfg = read_project(name)
         log_path = os.path.join(abspath(cfg["paths"]["logs"]), f"ui_{stage}_{time.strftime('%Y%m%d_%H%M%S')}.log")
@@ -457,6 +462,30 @@ def system_info():
     return v
 
 
+# ----------------------------------------------------------------------------------------------- chat
+def chat_state():
+    s = cb.load_settings()
+    dirs = [s["gguf_dir"]]
+    for p in list_projects():       # where scripts/export_gguf.py writes by default
+        try:
+            dirs.append(os.path.join(abspath(read_project(p["name"])["paths"]["work_dir"]), "gguf"))
+        except Exception:
+            pass
+    exe = cb.find_server(s)
+    try:
+        command = " ".join(cb.build_command(s, exe)) if exe and s["gguf"] else ""
+    except ValueError:
+        command = ""
+    cur = JOB["cur"]
+    return {"settings": s, "defaults": cb.DEFAULTS, "status": cb.MODEL.status(), "ggufs": cb.list_ggufs(dirs),
+            "server_exe": exe, "command": command, "system": system_info(),
+            "busy_job": bool(cur and cur.state == "running")}
+
+
+class ClientGone(Exception):
+    pass
+
+
 # ----------------------------------------------------------------------------------------------- http
 class Handler(BaseHTTPRequestHandler):
     server_version = "smel-ui"
@@ -486,9 +515,14 @@ class Handler(BaseHTTPRequestHandler):
             if method == "GET" and not parts:
                 with open(PAGE, "rb") as f:
                     return self.send(200, f.read(), "text/html; charset=utf-8")
+            if method == "GET" and parts == ["chat"]:
+                with open(CHAT_PAGE, "rb") as f:
+                    return self.send(200, f.read(), "text/html; charset=utf-8")
             if parts[:1] != ["api"]:
                 return self.send(404, {"error": "not found"})
             parts = parts[1:]
+            if parts[:1] == ["chat"]:
+                return self.chat_route(method, parts[1:], q)
             if method == "GET" and parts == ["state"]:
                 j = JOB["cur"]
                 return self.send(200, {"models": MODELS, "projects": list_projects(), "system": system_info(),
@@ -515,6 +549,55 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(400, {"error": str(e)})
         except RuntimeError as e:
             return self.send(409, {"error": str(e)})
+
+    def chat_route(self, method, rest, q):
+        M = cb.MODEL
+        if method == "GET" and rest == ["state"]:
+            return self.send(200, chat_state())
+        if method == "PUT" and rest == ["settings"]:
+            cb.save_settings(self.body())
+            return self.send(200, chat_state())
+        if method == "POST" and rest == ["start"]:
+            cur = JOB["cur"]
+            if cur and cur.state == "running":
+                raise RuntimeError(f"busy: {cur.project}/{cur.stage} is running; the GPU is in use")
+            M.start()
+            return self.send(200, chat_state())
+        if method == "POST" and rest == ["stop"]:
+            M.stop()
+            return self.send(200, chat_state())
+        if method == "POST" and rest == ["warmup"]:
+            M.warm_async(str(self.body().get("system") or ""))
+            return self.send(200, {"status": "scheduled"})
+        if method == "GET" and rest == ["log"]:
+            return self.send(200, cb.tail(cb.LOG, int(q.get("n", 60))).encode(), "text/plain; charset=utf-8")
+        if method == "POST" and rest == ["completions"]:
+            body = M.prepare_chat(self.body())
+            state = M.status()["state"]
+            if state not in ("ready", "sleeping"):
+                raise RuntimeError(f"the model is {state}: start it first")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+
+            def write(b):
+                try:
+                    self.wfile.write(b)
+                    self.wfile.flush()
+                except OSError:
+                    raise ClientGone()
+            try:
+                M.stream_chat(body, write)
+            except ClientGone:
+                pass
+            except Exception as e:
+                try:
+                    write(("data: " + json.dumps({"error": f"{type(e).__name__}: {e}"}) + "\n\n").encode())
+                except ClientGone:
+                    pass
+            return
+        return self.send(404, {"error": "not found"})
 
     def project_route(self, method, name, rest, q):
         cfg = read_project(name)
@@ -583,6 +666,8 @@ def main():
     except KeyboardInterrupt:
         if JOB["cur"]:
             JOB["cur"].stop()
+    finally:
+        cb.MODEL.stop()
 
 
 if __name__ == "__main__":

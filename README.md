@@ -163,6 +163,39 @@ command line: the buttons run the scripts from the table below with the project'
 The page can be switched between English and Russian (the button in the header). Use `--host 0.0.0.0` only on a trusted
 network: it makes the page and the stages reachable from other computers, and there is no password.
 
+### Chat window
+
+The **Chat with a model** button in the header opens a separate window for talking to a GGUF model with this
+project's inference settings (it needs a [llama.cpp](https://github.com/ggml-org/llama.cpp) build; GGUF export itself
+stays on the command line, `scripts/export_gguf.py`).
+
+1. **Model.** Pick the GGUF (the list shows the files in `work/<project>/gguf`, where the export writes, and in the
+   folder set under *Advanced*) or type a path, and give the path of `llama-server` or of the build folder. GGUFs with
+   mixed-precision experts need the patched build from [inference/](inference/README.md). *Save* keeps the settings in
+   `configs/chat.local.yaml`; they apply at the next start.
+2. **Start model**, or just send a message: a stopped model is started for you (20-60 s) and the answer follows.
+3. **Chat.** Answers stream in. Under each one the window shows the first-token time, tokens per second, and how many
+   prompt tokens were new and how many came from the prompt cache. *Stop* cuts a generation short. The system prompt,
+   sampling presets (Qwen3.6, Gemma 4) and the *Thinking* switch are in *Chat settings*; the conversation is kept in
+   the browser until you press *Clear chat*.
+
+What the window applies (measured on the reference app, Qwen3.6-35B-A3B on an 8 GB GPU and 24 GB RAM, see
+[docs/results_mixed_experts.md](docs/results_mixed_experts.md)):
+
+| setting | default | effect |
+|---|---|---|
+| experts in RAM (`--n-cpu-moe 99`) | all | ~4.4 GB of VRAM, room for other GPU programs; experts on the GPU were not faster (22.6 vs 22.3 tok/s) |
+| MTP draft tokens | auto: 1 for Qwen, off for Gemma | 22.8 tok/s against 21.1 without and 20.9 with 2; needs a GGUF with the MTP head |
+| prompt cache, one slot | on | each turn computes only the new tokens |
+| micro-batch 1024, q8_0 KV cache | on | long prompts ~1.7x faster than with 512; less VRAM for the context |
+| sleep after idle | 15 min | unloads the model (RAM ~15 -> 0.5 GB) |
+| warm-up | on | typing in the window wakes a sleeping model: the GGUF is read in order into the OS cache and a 1-token request puts the system prompt into the cache; the first answer after sleep took ~5 s instead of 20-50 s |
+| `mlock` | off | pins the weights in RAM; needs free RAM of the model size |
+
+Generation speed follows how much of the weights stays in RAM (29 tok/s with all 12 GB resident, 24 with 9 GB, 15 with
+5 GB), so close memory-hungry programs before a long chat. The model and a pipeline stage do not fit in VRAM
+together: starting one while the other runs is refused with a message.
+
 ## Project layout
 
 ```
@@ -174,7 +207,7 @@ smel/       library: model_io (checkpoint access, model dimensions), moe, quant 
             mixed_experts (hot/cold expert GGUF)
 scripts/    pipeline stages, expert_usage + mixed_experts_gguf (inference), scripts/bench/ benchmarks
 configs/    default.yaml (Qwen), gemma4.yaml
-ui/         web UI: server.py (standard library) + index.html
+ui/         web UI: server.py (standard library), index.html (pipeline), chat.html + chat_backend.py (chat window)
 tests/      equivalence tests against transformers on tiny random models of both classes, mixed-experts GGUF layout
 examples/   persona_eval: generation, automatic metrics, blind pairwise judges (reference answers; identical contexts)
 inference/  mixed-precision experts: llama.cpp patch and how-to

@@ -8,6 +8,9 @@ needs ~2 GB less RAM at the same generation speed, and a blind judge cannot tell
 
 Nothing is removed: the router is unchanged and a cold expert is still used when the router picks it.
 
+The web UI's chat window ([ui/](../ui/chat_backend.py)) starts llama-server for any GGUF, including a mixed one, with
+the flags measured for this setup (MTP draft, one slot with the prompt cache, sleep and warm-up); see the README.
+
 ## The patch
 
 `llama_cpp_patches/mixed-experts-b11827.patch`, against llama.cpp **b11827** (commit 970b51ce7); MIT, like llama.cpp.

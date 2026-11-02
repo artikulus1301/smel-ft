@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMEL FT Chat</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f6f6f4; --surface: #fcfcfb; --surface-2: #f0efec; --border: #dedcd6;
+  --text: #0b0b0b; --text-2: #52514e; --muted: #7a7973;
+  --accent: #2a78d6; --accent-ink: #ffffff; --user: #e3eefb;
+  --good: #1f7a3a; --warn: #9a6200; --bad: #c03535;
+  --good-bg: #e5f3e8; --warn-bg: #fbf0d9; --bad-bg: #fbe5e3; --sleep-bg: #e3eefb; --sleep: #1f5fb0;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121211; --surface: #1a1a19; --surface-2: #232321; --border: #34332f;
+    --text: #f0efec; --text-2: #c3c2b7; --muted: #8f8e86;
+    --accent: #3987e5; --user: #1d2b3d;
+    --good: #5fc27a; --warn: #e0a83a; --bad: #ee6f6f;
+    --good-bg: #183020; --warn-bg: #33280f; --bad-bg: #3a1a19; --sleep-bg: #1d2b3d; --sleep: #7db4f5;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121211; --surface: #1a1a19; --surface-2: #232321; --border: #34332f;
+  --text: #f0efec; --text-2: #c3c2b7; --muted: #8f8e86;
+  --accent: #3987e5; --user: #1d2b3d;
+  --good: #5fc27a; --warn: #e0a83a; --bad: #ee6f6f;
+  --good-bg: #183020; --warn-bg: #33280f; --bad-bg: #3a1a19; --sleep-bg: #1d2b3d; --sleep: #7db4f5;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface);
+  border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+header h1 { font-size: 15px; margin: 0; font-weight: 650; }
+.chips { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; align-items: center; }
+.chip { font-size: 12px; color: var(--text-2); background: var(--surface-2); border-radius: 99px; padding: 3px 10px;
+  font-variant-numeric: tabular-nums; }
+.badge { font-size: 12px; padding: 2px 10px; border-radius: 99px; font-weight: 600; }
+.badge.ok { background: var(--good-bg); color: var(--good); }
+.badge.no { background: var(--surface-2); color: var(--muted); }
+.badge.warn { background: var(--warn-bg); color: var(--warn); }
+.badge.bad { background: var(--bad-bg); color: var(--bad); }
+.badge.sleep { background: var(--sleep-bg); color: var(--sleep); }
+.main { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 360px; gap: 16px; padding: 16px; }
+@media (max-width: 860px) { .main { grid-template-columns: 1fr; overflow: auto; } }
+.chat { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; min-height: 420px; }
+#msgs { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.empty { margin: auto; color: var(--muted); text-align: center; max-width: 42ch; }
+.msg { max-width: 82%; display: flex; flex-direction: column; gap: 4px; }
+.msg.user { align-self: flex-end; }
+.bubble { padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; background: var(--surface-2); }
+.msg.user .bubble { background: var(--user); }
+.bubble pre { margin: 6px 0; padding: 8px 10px; border-radius: 8px; background: var(--bg); overflow-x: auto;
+  white-space: pre; font: 12.5px/1.4 ui-monospace, Consolas, monospace; }
+.bubble code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; background: var(--bg);
+  padding: 1px 4px; border-radius: 4px; }
+.bubble pre code { background: none; padding: 0; }
+.stats { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; padding: 0 4px; }
+.note { color: var(--muted); font-style: italic; }
+.err { color: var(--bad); }
+details.think { font-size: 12.5px; color: var(--text-2); }
+details.think div { white-space: pre-wrap; padding: 4px 0 0 10px; border-left: 2px solid var(--border); }
+.composer { border-top: 1px solid var(--border); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.composer .row { display: flex; gap: 8px; align-items: end; }
+textarea, input, select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 9px; min-width: 0; }
+textarea { resize: vertical; width: 100%; }
+#in { resize: none; height: 64px; }
+input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button { font: inherit; border-radius: 8px; padding: 7px 14px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.link { border: 0; background: none; color: var(--accent); padding: 0; }
+aside { overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+.card h2 { font-size: 14px; margin: 0 0 8px; font-weight: 650; }
+label.f { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-2); margin: 8px 0; }
+label.f small { color: var(--muted); font-size: 11.5px; line-height: 1.35; }
+label.cb { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--text-2); margin: 8px 0; }
+label.cb small { display: block; color: var(--muted); font-size: 11.5px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+details > summary { cursor: pointer; color: var(--accent); font-size: 12.5px; margin-top: 6px; }
+pre.log { margin: 6px 0 0; max-height: 200px; overflow: auto; background: var(--bg); border-radius: 8px; padding: 8px;
+  font: 11.5px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+.hint { font-size: 12px; color: var(--muted); margin: 4px 0; }
+.banner { font-size: 12.5px; padding: 6px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); }
+.banner.bad { background: var(--bad-bg); color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>SMEL FT · <span data-i="chat"></span></h1>
+  <span id="state" class="badge no"></span>
+  <button id="start" class="primary" data-i="start"></button>
+  <button id="stop" data-i="stop_model"></button>
+  <div class="chips" id="sys"></div>
+  <button id="lang" class="link"></button>
+</header>
+
+<div class="main">
+  <section class="chat">
+    <div id="msgs"></div>
+    <div class="composer">
+      <div id="banner"></div>
+      <div class="row">
+        <textarea id="in" rows="2" data-ph="placeholder"></textarea>
+        <button id="send" class="primary" data-i="send"></button>
+        <button id="abort" data-i="stop_gen" hidden></button>
+      </div>
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <span class="hint" data-i="keys"></span>
+        <button id="clear" class="link" data-i="clear"></button>
+      </div>
+    </div>
+  </section>
+
+  <aside>
+    <div class="card">
+      <h2 data-i="s_model"></h2>
+      <label class="f"><span data-i="gguf"></span>
+        <input data-k="gguf" list="ggufs" autocomplete="off"><datalist id="ggufs"></datalist>
+        <small id="gguf_hint"></small></label>
+      <label class="f"><span data-i="server"></span><input data-k="llama_server" placeholder="C:/llm/llama.cpp"><small data-i="server_hint"></small></label>
+      <div id="status_info" class="hint"></div>
+      <button class="save primary" data-i="save"></button> <span class="hint" data-i="next_start"></span>
+      <details><summary data-i="show_cmd"></summary><pre class="log" id="cmd"></pre></details>
+      <details id="logbox"><summary data-i="show_log"></summary><pre class="log" id="log"></pre></details>
+    </div>
+
+    <div class="card">
+      <h2 data-i="s_speed"></h2>
+      <label class="f"><span data-i="n_cpu_moe"></span><input data-k="n_cpu_moe" type="number" min="0"><small data-i="n_cpu_moe_hint"></small></label>
+      <label class="f"><span data-i="spec"></span>
+        <select data-k="spec_draft"><option value="-1" data-i="auto"></option><option value="0" data-i="off"></option><option value="1">1</option><option value="2">2</option></select>
+        <small data-i="spec_hint"></small></label>
+      <label class="f"><span data-i="sleep"></span><input data-k="sleep_min" type="number" min="0"><small data-i="sleep_hint"></small></label>
+      <label class="cb"><input data-k="prefetch" type="checkbox"><span><span data-i="prefetch"></span><small data-i="prefetch_hint"></small></span></label>
+      <label class="cb"><input data-k="mlock" type="checkbox"><span><span data-i="mlock"></span><small data-i="mlock_hint"></small></span></label>
+      <label class="f"><span data-i="ctx"></span><input data-k="ctx" type="number" min="512" step="512"><small data-i="ctx_hint"></small></label>
+      <details><summary data-i="advanced"></summary>
+        <div class="grid2">
+          <label class="f"><span data-i="ubatch"></span><input data-k="ubatch" type="number"></label>
+          <label class="f"><span data-i="cache_ram"></span><input data-k="cache_ram_mb" type="number"></label>
+          <label class="f"><span data-i="threads"></span><input data-k="threads" type="number" min="0"></label>
+          <label class="f"><span data-i="port"></span><input data-k="port" type="number"></label>
+        </div>
+        <label class="f"><span data-i="gguf_dir"></span><input data-k="gguf_dir"></label>
+        <label class="f"><span data-i="extra"></span><input data-k="extra" placeholder="--no-warmup"></label>
+      </details>
+      <button class="save primary" style="margin-top:8px" data-i="save"></button>
+    </div>
+
+    <div class="card">
+      <h2 data-i="s_chat"></h2>
+      <label class="f"><span data-i="system"></span><textarea id="system" rows="3"></textarea></label>
+      <div class="grid2">
+        <label class="f"><span data-i="preset"></span><select id="preset"><option value="qwen">Qwen3.6</option><option value="gemma">Gemma 4</option></select></label>
+        <label class="f"><span data-i="max_tokens"></span><input id="p_max" type="number" min="1"></label>
+        <label class="f"><span>temperature</span><input id="p_temp" type="number" step="0.05" min="0"></label>
+        <label class="f"><span>top_p</span><input id="p_top_p" type="number" step="0.05" min="0" max="1"></label>
+        <label class="f"><span>top_k</span><input id="p_top_k" type="number" min="0"></label>
+        <label class="f"><span>presence_penalty</span><input id="p_pp" type="number" step="0.1"></label>
+      </div>
+      <label class="cb"><input id="p_think" type="checkbox"><span><span data-i="thinking"></span><small data-i="thinking_hint"></small></span></label>
+    </div>
+  </aside>
+</div>
+
+<script>
+"use strict";
+const T = {
+  en: {
+    chat: "Chat", start: "Start model", stop_model: "Stop model", send: "Send", stop_gen: "Stop", clear: "Clear chat",
+    keys: "Enter sends, Shift+Enter adds a line", placeholder: "Message…",
+    s_model: "Model", s_speed: "Speed", s_chat: "Chat settings", save: "Save", next_start: "applies at the next start",
+    gguf: "GGUF file", server: "llama-server", show_cmd: "Command line", show_log: "Server log",
+    server_hint: "The file or the build folder. GGUFs with mixed-precision experts need the patched build (inference/README.md).",
+    n_cpu_moe: "Experts in RAM (layers)", n_cpu_moe_hint: "99 = all experts in RAM: ~4.4 GB of VRAM, room left for other GPU programs. Experts on the GPU were not faster here (22.6 vs 22.3 tok/s).",
+    spec: "MTP draft tokens", auto: "auto", off: "off",
+    spec_hint: "Guesses the next tokens and checks them in one step. 1 was fastest (22.8 vs 21.1 tok/s without). Needs a GGUF with the MTP head. Auto: 1 for Qwen, off for Gemma.",
+    sleep: "Sleep after idle, minutes", sleep_hint: "Unloads the model after this idle time (RAM ~15 → 0.5 GB); 0 = never. Typing here wakes it in advance.",
+    prefetch: "Read the file at wake-up", prefetch_hint: "Reads the GGUF into the OS cache first: the first answer after sleep takes ~5 s instead of 20–50 s.",
+    mlock: "Keep weights in RAM (mlock)", mlock_hint: "Pins the weights so Windows cannot page them out. Needs free RAM of the model size; a model that does not fit slows the whole PC.",
+    ctx: "Context, tokens", ctx_hint: "One conversation, one slot with a prompt cache: every turn computes only the new tokens.",
+    advanced: "Advanced", ubatch: "Micro-batch", cache_ram: "Prompt cache, MB", threads: "Threads (0 = cores)", port: "Port",
+    gguf_dir: "Folder to look for GGUF files", extra: "Extra llama-server flags",
+    system: "System prompt", preset: "Preset", max_tokens: "Max tokens", thinking: "Thinking", thinking_hint: "The model reasons before answering: slower and needs a larger token limit; shown in a fold-out.",
+    stopped: "stopped", loading: "loading", ready: "ready", sleeping: "asleep", error: "failed",
+    external: "started outside the UI", no_gguf: "No GGUF found. Type a path, or set a folder under Advanced. scripts/export_gguf.py writes to work/<project>/gguf.",
+    found_gguf: "{n} GGUF found", loading_model: "Loading the model (20–60 s)…", ttft: "first token", tokens: "tokens",
+    prompt: "prompt", new_: "new", cached: "cached", stopped_gen: "stopped", thinking_lbl: "Thinking",
+    empty: "Start the model and write a message. Typing wakes a sleeping model in advance.",
+    died: "The server stopped.", up: "up {m} min", warm: "warm-up: file read {r} s, total {t} s",
+    job_busy: "A stage is running: the GPU is in use.", asleep_hint: "asleep: wakes on the first message"
+  },
+  ru: {
+    chat: "Чат", start: "Запустить модель", stop_model: "Остановить модель", send: "Отправить", stop_gen: "Стоп", clear: "Очистить чат",
+    keys: "Enter отправляет, Shift+Enter — новая строка", placeholder: "Сообщение…",
+    s_model: "Модель", s_speed: "Скорость", s_chat: "Настройки чата", save: "Сохранить", next_start: "вступит в силу при следующем запуске",
+    gguf: "Файл GGUF", server: "llama-server", show_cmd: "Командная строка", show_log: "Лог сервера",
+    server_hint: "Файл или папка со сборкой. Для GGUF со смешанной точностью экспертов нужна патченая сборка (inference/README.md).",
+    n_cpu_moe: "Эксперты в RAM (слоёв)", n_cpu_moe_hint: "99 = все эксперты в RAM: ~4.4 ГБ видеопамяти, остаётся место другим программам на GPU. Эксперты на GPU не ускорили генерацию (22.6 против 22.3 ток/с).",
+    spec: "Токенов MTP-черновика", auto: "авто", off: "выкл.",
+    spec_hint: "Угадывает следующие токены и проверяет их за один шаг. 1 оказался быстрее всего (22.8 против 21.1 ток/с без него). Нужен GGUF с головой MTP. Авто: 1 для Qwen, выкл. для Gemma.",
+    sleep: "Сон после простоя, минут", sleep_hint: "Выгружает модель после простоя (RAM ~15 → 0.5 ГБ); 0 — не спать. Набор текста здесь будит её заранее.",
+    prefetch: "Читать файл при пробуждении", prefetch_hint: "Сначала читает GGUF в кэш ОС: первый ответ после сна ~5 с вместо 20–50 с.",
+    mlock: "Держать веса в RAM (mlock)", mlock_hint: "Закрепляет веса, чтобы Windows не выгружал их. Нужна свободная RAM размером с модель; если модель не помещается, тормозит весь компьютер.",
+    ctx: "Контекст, токенов", ctx_hint: "Один диалог, один слот с кэшем промпта: каждый ход считает только новые токены.",
+    advanced: "Дополнительно", ubatch: "Микробатч", cache_ram: "Кэш промптов, МБ", threads: "Потоков (0 = ядер)", port: "Порт",
+    gguf_dir: "Папка для поиска GGUF", extra: "Свои флаги llama-server",
+    system: "Системный промпт", preset: "Пресет", max_tokens: "Макс. токенов", thinking: "Рассуждение", thinking_hint: "Модель рассуждает перед ответом: медленнее и нужен больший лимит токенов; рассуждение — в раскрывающемся блоке.",
+    stopped: "остановлена", loading: "загрузка", ready: "готова", sleeping: "спит", error: "ошибка",
+    external: "запущена вне интерфейса", no_gguf: "GGUF не найден. Укажите путь или папку в «Дополнительно». scripts/export_gguf.py пишет в work/<проект>/gguf.",
+    found_gguf: "найдено GGUF: {n}", loading_model: "Загружаю модель (20–60 с)…", ttft: "первый токен", tokens: "токенов",
+    prompt: "промпт", new_: "новых", cached: "из кэша", stopped_gen: "остановлено", thinking_lbl: "Рассуждение",
+    empty: "Запустите модель и напишите сообщение. Набор текста заранее будит спящую модель.",
+    died: "Сервер остановился.", up: "работает {m} мин", warm: "прогрев: чтение файла {r} с, всего {t} с",
+    job_busy: "Идёт стадия: видеокарта занята.", asleep_hint: "спит: проснётся на первом сообщении"
+  }
+};
+const $ = s => document.querySelector(s);
+let lang = "en";
+try { lang = new URLSearchParams(location.search).get("lang") || localStorage.getItem("smel_lang") ||
+  ((navigator.language || "").startsWith("ru") ? "ru" : "en"); } catch (e) {}
+if (lang !== "ru") lang = "en";
+const t = (k, v) => { let s = T[lang][k] ?? T.en[k] ?? k; for (const x in v || {}) s = s.replace("{" + x + "}", v[x]); return s; };
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const fmt = (x, d = 1) => x == null || isNaN(x) ? "–" : Number(x).toFixed(d);
+function applyI18n() {
+  document.querySelectorAll("[data-i]").forEach(el => el.textContent = t(el.dataset.i));
+  document.querySelectorAll("[data-ph]").forEach(el => el.placeholder = t(el.dataset.ph));
+  document.documentElement.lang = lang;
+  $("#lang").textContent = lang === "en" ? "Русский" : "English";
+}
+async function api(method, url, body) {
+  const opt = {method, headers: {}};
+  if (body !== undefined) { opt.body = JSON.stringify(body); opt.headers["Content-Type"] = "application/json"; }
+  const r = await fetch(url, opt);
+  const ct = r.headers.get("Content-Type") || "";
+  const data = ct.includes("json") ? await r.json() : await r.text();
+  if (!r.ok) throw new Error((data && data.error) || r.statusText);
+  return data;
+}
+
+// ---------------------------------------------------------------------------------------------- chat state
+const PRESETS = {qwen: {temp: 0.7, top_p: 0.8, top_k: 20, pp: 1.5}, gemma: {temp: 1.0, top_p: 0.95, top_k: 64, pp: 0}};
+let chat = {messages: [], system: "", p: {preset: "qwen", ...PRESETS.qwen, max: 512, think: false}};
+try { const s = JSON.parse(localStorage.getItem("smel_chat") || "null"); if (s && Array.isArray(s.messages)) chat = {...chat, ...s, p: {...chat.p, ...s.p}}; } catch (e) {}
+const save = () => { try { localStorage.setItem("smel_chat", JSON.stringify(chat)); } catch (e) {} };
+let S = null, busy = false, ctl = null, lastWarm = 0, settingsFocused = false;
+
+function inline(s) {
+  return esc(s).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+}
+function renderText(text) {
+  const parts = String(text).split(/```/);
+  return parts.map((p, i) => i % 2 ? "<pre><code>" + esc(p.replace(/^[^\n]*\n/, "")) + "</code></pre>" : inline(p)).join("");
+}
+function msgNode(m) {
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + m.role;
+  const b = document.createElement("div");
+  b.className = "bubble";
+  let html = "";
+  if (m.reasoning) html += `<details class="think"><summary>${t("thinking_lbl")}</summary><div>${esc(m.reasoning)}</div></details>`;
+  if (m.note) html += `<span class="note">${esc(m.note)}</span>`;
+  html += renderText(m.content || "");
+  if (m.error) html += `<div class="err">${esc(m.error)}</div>`;
+  b.innerHTML = html;
+  wrap.append(b);
+  if (m.role === "assistant" && (m.timings || m.ttft != null)) {
+    const s = document.createElement("div"), tm = m.timings || {};
+    s.className = "stats";
+    const bits = [];
+    if (m.ttft != null) bits.push(`${t("ttft")} ${fmt(m.ttft, 1)} s`);
+    if (tm.predicted_per_second) bits.push(`${fmt(tm.predicted_per_second)} tok/s`);
+    if (tm.predicted_n) bits.push(`${tm.predicted_n} ${t("tokens")}`);
+    if (tm.prompt_n != null) bits.push(`${t("prompt")}: ${tm.prompt_n} ${t("new_")} + ${tm.cache_n || 0} ${t("cached")}`);
+    if (m.stopped) bits.push(t("stopped_gen"));
+    s.textContent = bits.join(" · ");
+    wrap.append(s);
+  }
+  return wrap;
+}
+function renderMsgs(onlyLast) {
+  const box = $("#msgs"), near = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  if (onlyLast && box.lastChild && chat.messages.length) box.replaceChild(msgNode(chat.messages[chat.messages.length - 1]), box.lastChild);
+  else {
+    box.replaceChildren();
+    if (!chat.messages.length) { const e = document.createElement("div"); e.className = "empty"; e.textContent = t("empty"); box.append(e); }
+    chat.messages.forEach(m => box.append(msgNode(m)));
+  }
+  if (near || !onlyLast) box.scrollTop = box.scrollHeight;
+}
+function banner(msg, bad) {
+  $("#banner").innerHTML = msg ? `<div class="banner ${bad ? "bad" : ""}">${esc(msg)}</div>` : "";
+}
+
+// ---------------------------------------------------------------------------------------------- server state
+function renderState() {
+  if (!S) return;
+  const st = S.status, run = ["loading", "ready", "sleeping"].includes(st.state);
+  const cls = {stopped: "no", loading: "warn", ready: "ok", sleeping: "sleep", error: "bad"}[st.state];
+  const b = $("#state"); b.textContent = t(st.state) + (st.external ? " · " + t("external") : ""); b.className = "badge " + cls;
+  $("#start").disabled = run || S.busy_job; $("#stop").disabled = !run || st.external;
+  $("#start").title = S.busy_job ? t("job_busy") : "";
+  const g = S.system.gpu, r = S.system.ram, c = [];
+  if (g) c.push(`VRAM ${fmt(g.mem_used_gb)}/${fmt(g.mem_total_gb)} GB`);
+  if (r) c.push(`RAM ${fmt(r.used_gb)}/${fmt(r.total_gb)} GB`);
+  if (run && st.uptime != null) c.push(t("up", {m: Math.round(st.uptime / 60)}));
+  $("#sys").replaceChildren(...c.map(x => Object.assign(document.createElement("span"), {className: "chip", textContent: x})));
+  const info = [];
+  if (st.state === "sleeping") info.push(t("asleep_hint"));
+  if (st.last_warm) info.push(t("warm", {r: st.last_warm.read_s, t: st.last_warm.total_s}));
+  if (st.state === "error") info.push(t("died") + (st.rc != null ? ` (exit ${st.rc})` : ""));
+  $("#status_info").textContent = info.join(" · ");
+  $("#ggufs").replaceChildren(...S.ggufs.map(g => Object.assign(document.createElement("option"), {value: g.path, label: `${g.name} (${g.size_gb} GB)`})));
+  $("#gguf_hint").textContent = S.ggufs.length ? t("found_gguf", {n: S.ggufs.length}) : (S.settings.gguf ? "" : t("no_gguf"));
+  $("#cmd").textContent = S.command || "";
+  if (st.state === "error" && st.log_tail) { $("#logbox").open = true; $("#log").textContent = st.log_tail; }
+  if (!settingsFocused) fillSettings();
+  if (S.busy_job && !run) banner(t("job_busy")); else if ($("#banner").textContent === t("job_busy")) banner("");
+}
+function fillSettings() {
+  document.querySelectorAll("[data-k]").forEach(el => {
+    if (document.activeElement === el) return;
+    const v = S.settings[el.dataset.k];
+    if (el.type === "checkbox") el.checked = !!v; else el.value = v ?? "";
+  });
+}
+let stateSeq = 0;      // an answer of a poll that started before a start/stop/save click is stale: drop it
+async function poll() {
+  const my = ++stateSeq;
+  try { const s = await api("GET", "/api/chat/state"); if (my === stateSeq) { S = s; renderState(); } } catch (e) {}
+}
+async function act(method, url, body) {
+  stateSeq++;
+  S = await api(method, url, body);
+  stateSeq++;
+  renderState();
+}
+document.querySelectorAll("[data-k]").forEach(el => {
+  el.addEventListener("focus", () => settingsFocused = true);
+  el.addEventListener("blur", () => settingsFocused = false);
+});
+document.querySelectorAll("button.save").forEach(b => b.onclick = async () => {
+  const vals = {};
+  document.querySelectorAll("[data-k]").forEach(el => vals[el.dataset.k] = el.type === "checkbox" ? el.checked : el.value);
+  try { await act("PUT", "/api/chat/settings", vals); banner(""); } catch (e) { banner(e.message, true); }
+});
+$("#start").onclick = async () => { try { banner(""); await act("POST", "/api/chat/start"); } catch (e) { banner(e.message, true); } };
+$("#stop").onclick = async () => { try { await act("POST", "/api/chat/stop"); } catch (e) { banner(e.message, true); } };
+$("#logbox").ontoggle = async () => { if ($("#logbox").open) try { $("#log").textContent = await api("GET", "/api/chat/log?n=80"); } catch (e) {} };
+
+// ---------------------------------------------------------------------------------------------- sending
+async function ensureRunning(a) {
+  if (!["loading", "ready", "sleeping"].includes(S.status.state)) { a.note = t("loading_model"); renderMsgs(true); S = await api("POST", "/api/chat/start"); }
+  const t0 = Date.now();
+  for (;;) {
+    a.note = t("loading_model"); renderMsgs(true);
+    await new Promise(r => setTimeout(r, 1000));
+    if (ctl && ctl.signal.aborted) throw new DOMException("aborted", "AbortError");
+    S = await api("GET", "/api/chat/state"); renderState();
+    const st = S.status.state;
+    if (st === "ready" || st === "sleeping") break;
+    if (st === "error" || st === "stopped") throw new Error(t("died") + (S.status.log_tail ? "\n" + S.status.log_tail.split("\n").slice(-4).join("\n") : ""));
+    if (Date.now() - t0 > 600000) throw new Error("timeout");
+  }
+  a.note = "";
+}
+async function stream(a, history) {
+  const p = chat.p, t0 = performance.now();
+  const r = await fetch("/api/chat/completions", {method: "POST", headers: {"Content-Type": "application/json"}, signal: ctl.signal,
+    body: JSON.stringify({messages: history, system: chat.system, temperature: p.temp, top_p: p.top_p, top_k: p.top_k,
+      presence_penalty: p.pp, max_tokens: p.max, thinking: p.think})});
+  if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || r.statusText); }
+  const rd = r.body.getReader(), dec = new TextDecoder();
+  let buf = "", last = 0;
+  for (;;) {
+    const {done, value} = await rd.read();
+    if (done) break;
+    buf += dec.decode(value, {stream: true});
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!line.startsWith("data:")) continue;
+      const d = line.slice(5).trim();
+      if (d === "[DONE]") continue;
+      let j; try { j = JSON.parse(d); } catch (e) { continue; }
+      if (j.error) throw new Error(typeof j.error === "string" ? j.error : j.error.message);
+      const dl = j.choices && j.choices[0] && j.choices[0].delta;
+      if (dl && (dl.content || dl.reasoning_content)) {
+        if (a.ttft == null) a.ttft = (performance.now() - t0) / 1000;
+        if (dl.content) a.content += dl.content;
+        if (dl.reasoning_content) a.reasoning = (a.reasoning || "") + dl.reasoning_content;
+      }
+      if (j.timings) a.timings = j.timings;
+    }
+    if (performance.now() - last > 60) { last = performance.now(); renderMsgs(true); }
+  }
+}
+async function send() {
+  const ta = $("#in"), text = ta.value.trim();
+  if (!text || busy || !S) return;
+  banner("");
+  ta.value = "";
+  chat.messages.push({role: "user", content: text});
+  const a = {role: "assistant", content: ""};
+  chat.messages.push(a);
+  busy = true; ctl = new AbortController(); setBusy(); renderMsgs();
+  try {
+    await ensureRunning(a);
+    await stream(a, chat.messages.slice(0, -1).map(m => ({role: m.role, content: m.content})));
+  } catch (e) {
+    if (e.name === "AbortError") a.stopped = true;
+    else if (!a.content) { chat.messages.splice(-2, 2); ta.value = text; banner(e.message, true); }   // nothing to keep: back to the draft
+    else a.error = e.message;
+  } finally {
+    a.note = ""; busy = false; ctl = null; setBusy(); save(); renderMsgs(); poll();
+  }
+}
+function setBusy() { $("#send").hidden = busy; $("#abort").hidden = !busy; }
+$("#send").onclick = send;
+$("#abort").onclick = () => ctl && ctl.abort();
+$("#clear").onclick = () => { if (busy) return; chat.messages = []; save(); renderMsgs(); banner(""); };
+$("#in").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+
+// wake a sleeping model while the user types or focuses the box (at most once per 30 s)
+function warmup() {
+  if (!S || !["ready", "sleeping"].includes(S.status.state) || Date.now() - lastWarm < 30000) return;
+  lastWarm = Date.now();
+  api("POST", "/api/chat/warmup", {system: chat.system}).catch(() => {});
+}
+$("#in").addEventListener("input", warmup);
+$("#in").addEventListener("focus", warmup);
+
+// ---------------------------------------------------------------------------------------------- chat settings
+const P = {temp: "#p_temp", top_p: "#p_top_p", top_k: "#p_top_k", pp: "#p_pp", max: "#p_max"};
+function fillParams() {
+  for (const [k, sel] of Object.entries(P)) $(sel).value = chat.p[k];
+  $("#p_think").checked = !!chat.p.think; $("#preset").value = chat.p.preset; $("#system").value = chat.system;
+}
+for (const [k, sel] of Object.entries(P)) $(sel).addEventListener("change", e => { const v = parseFloat(e.target.value); if (!isNaN(v)) { chat.p[k] = v; save(); } });
+$("#p_think").onchange = e => { chat.p.think = e.target.checked; save(); };
+$("#system").addEventListener("change", e => { chat.system = e.target.value; save(); });
+$("#preset").onchange = e => { chat.p = {...chat.p, ...PRESETS[e.target.value], preset: e.target.value}; fillParams(); save(); };
+$("#lang").onclick = () => { lang = lang === "en" ? "ru" : "en"; try { localStorage.setItem("smel_lang", lang); } catch (e) {}
+  applyI18n(); renderState(); renderMsgs(); };
+
+applyI18n(); fillParams(); setBusy(); renderMsgs();
+poll(); setInterval(poll, 2500);
+</script>
+</body>
+</html>

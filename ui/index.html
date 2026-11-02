@@ -137,6 +137,7 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
   <h1>SMEL FT</h1>
   <span class="sub" data-i="tagline"></span>
   <div class="chips" id="sys"></div>
+  <button id="chatbtn" data-i="chat"></button>
   <button id="lang" class="link" style="margin-left:8px"></button>
 </header>
 
@@ -173,6 +174,7 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 // ---------------------------------------------------------------------------------------------- i18n
 const T = {
   en: {
+    chat: "Chat with a model",
     tagline: "LoRA on router-selected experts of a large MoE, on one consumer GPU",
     projects: "Projects", new_project: "New project", name: "Name", model: "Model",
     model_dir_opt: "Model folder (optional)", create: "Create", pick: "Create a project or pick one on the left.",
@@ -215,6 +217,7 @@ const T = {
     general_lbl: "general", domain_lbl: "domain"
   },
   ru: {
+    chat: "Чат с моделью",
     tagline: "LoRA на экспертах большой MoE, выбранных по роутеру, на одной домашней видеокарте",
     projects: "Проекты", new_project: "Новый проект", name: "Название", model: "Модель",
     model_dir_opt: "Папка модели (необязательно)", create: "Создать", pick: "Создайте проект или выберите слева.",
@@ -625,6 +628,7 @@ function setBusy() {
 }
 
 // ---------------------------------------------------------------------------------------------- wiring
+$("#chatbtn").onclick = () => window.open("/chat", "smel_chat", "popup,width=1100,height=820");
 $("#jstop").onclick = () => api("POST", "/api/job/stop");
 $("#jtoggle").onclick = () => { const c = $("#console"); c.classList.toggle("min"); $("#layout").classList.toggle("min");
   $("#jtoggle").textContent = t(c.classList.contains("min") ? "show" : "hide"); };
